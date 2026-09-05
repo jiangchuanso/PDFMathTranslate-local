@@ -3,9 +3,75 @@ import logging
 import os
 
 import cv2
+import hashlib
 import numpy as np
 import ast
-from babeldoc.assets.assets import get_doclayout_onnx_model_path
+import requests
+from pathlib import Path
+
+_DOCLAYOUT_MODEL_FILENAME = "doclayout_yolo_docstructbench_imgsz1024.onnx"
+_DOCLAYOUT_MODEL_SHA3_256 = (
+    "60be061226930524958b5465c8c04af3d7c03bcb0beb66454f5da9f792e3cf2a"
+)
+_DOCLAYOUT_MODEL_URLS = [
+    "https://huggingface.co/wybxc/DocLayout-YOLO-DocStructBench-onnx/resolve/main/"
+    "doclayout_yolo_docstructbench_imgsz1024.onnx?download=true",
+    "https://hf-mirror.com/wybxc/DocLayout-YOLO-DocStructBench-onnx/resolve/main/"
+    "doclayout_yolo_docstructbench_imgsz1024.onnx?download=true",
+    "https://www.modelscope.cn/models/AI-ModelScope/DocLayout-YOLO-DocStructBench-onnx/"
+    "resolve/master/doclayout_yolo_docstructbench_imgsz1024.onnx",
+]
+
+
+def _cache_dir(kind: str) -> Path:
+    base = os.environ.get("PDF2ZH_CACHE_DIR", str(Path.home() / ".cache" / "pdf2zh"))
+    p = Path(base) / kind
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _sha3_256(path: Path) -> str:
+    h = hashlib.sha3_256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download(url: str, dest: Path) -> None:
+    with requests.get(url, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(1 << 20):
+                f.write(chunk)
+
+
+def get_doclayout_onnx_model_path() -> str:
+    """Download (if needed) the doclayout ONNX model and return its local path.
+
+    Set ``PDF2ZH_DOCLAYOUT_MODEL`` to a local file path to skip downloading
+    entirely (offline / intranet deployments).
+    """
+    override = os.environ.get("PDF2ZH_DOCLAYOUT_MODEL")
+    if override:
+        return override
+    cache = _cache_dir("models") / _DOCLAYOUT_MODEL_FILENAME
+    if cache.exists() and _sha3_256(cache) == _DOCLAYOUT_MODEL_SHA3_256:
+        return str(cache)
+    last_err = None
+    for url in _DOCLAYOUT_MODEL_URLS:
+        try:
+            logger.info("Downloading doclayout model from %s", url)
+            _download(url, cache)
+            if _sha3_256(cache) == _DOCLAYOUT_MODEL_SHA3_256:
+                return str(cache)
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            logger.warning("Failed to download doclayout model from %s: %s", url, e)
+    raise FileNotFoundError(
+        f"doclayout model download failed ({last_err}); "
+        "set PDF2ZH_DOCLAYOUT_MODEL to a local path"
+    )
 
 try:
     import onnx

@@ -29,7 +29,40 @@ from pdf2zh.doclayout import OnnxModel
 from pdf2zh.pdfinterp import PDFPageInterpreterEx
 
 from pdf2zh.config import ConfigManager
-from babeldoc.assets.assets import get_font_and_metadata
+from pdf2zh.doclayout import _cache_dir, _download, _sha3_256
+
+_FONT_METADATA = {
+    "GoNotoKurrent-Regular.ttf": "4324a60d507c691e6efc97420647f4d2c2d86d9de35009d1c769861b76074ae6",
+    "SourceHanSerifCN-Regular.ttf": "c8bf74da2c3b7457c9d887465b42fb6f80d3d84f361cfe5b0673a317fb1f85ad",
+    "SourceHanSerifTW-Regular.ttf": "85c1d6460b2e169b3d53ac60f6fb7a219fb99923027d78fb64b679475e2ddae4",
+    "SourceHanSerifJP-Regular.ttf": "3d1f9933c7f3abc8c285e317119a533e6dcfe6027d1f5f066ba71b3eb9161e9c",
+    "SourceHanSerifKR-Regular.ttf": "a85913439f0a49024ca77c02dfede4318e503ee6b2b7d8fef01eb42435f27b61",
+}
+_FONT_URLS = [
+    lambda name: f"https://raw.githubusercontent.com/funstory-ai/BabelDOC-Assets/refs/heads/main/fonts/{name}",
+    lambda name: f"https://hf-mirror.com/datasets/awwaawwa/BabelDOC-Assets/resolve/main/fonts/{name}?download=true",
+]
+
+
+def get_font_and_metadata(font_name: str):
+    """Download (if needed) a font and return ``(path, metadata)``.
+
+    Fonts are sourced from the upstream ``funstory-ai/BabelDOC-Assets`` repo.
+    """
+    cache = _cache_dir("fonts") / font_name
+    expected = _FONT_METADATA.get(font_name)
+    if cache.exists() and (expected is None or _sha3_256(cache) == expected):
+        return cache, {}
+    last_err = None
+    for url_fn in _FONT_URLS:
+        try:
+            _download(url_fn(font_name), cache)
+            if expected is None or _sha3_256(cache) == expected:
+                return cache, {}
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            logger.warning("Failed to download font %s: %s", font_name, e)
+    raise FileNotFoundError(f"font {font_name} download failed ({last_err})")
 
 NOTO_NAME = "noto"
 
