@@ -17,18 +17,11 @@ dependencies = [
     "tqdm",
     "tenacity",
     "numpy",
-    "ollama",
-    "xinference-client",
-    "deepl",
-    "openai>=1.0.0",
-    "azure-ai-translation-text<=1.0.1",
-    # 5.36 has a bug, webui starts with a white screen
-    "gradio<5.36",
+    "gradio<5.36",  # 5.36 has a bug, webui starts with a white screen
     "huggingface_hub",
     "onnx",
     "onnxruntime",
     "opencv-python-headless",
-    "tencentcloud-sdk-python-tmt",
     "pdfminer-six==20250416",
     "gradio_pdf>=0.0.21",
     "pikepdf",
@@ -39,6 +32,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+translators = [
+    "deepl",
+    "ollama",
+    "openai>=1.0.0",
+    "xinference-client",
+    "azure-ai-translation-text<=1.0.1",
+    "tencentcloud-sdk-python-tmt",
+]
 backend = [
     "flask",
     "celery",

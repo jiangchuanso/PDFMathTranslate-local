@@ -7,19 +7,7 @@ import unicodedata
 from copy import copy
 from string import Template
 from typing import cast
-import deepl
-import ollama
-import openai
 import requests
-import xinference_client
-from azure.ai.translation.text import TextTranslationClient
-from azure.core.credentials import AzureKeyCredential
-from tencentcloud.common import credential
-from tencentcloud.tmt.v20180321.models import (
-    TextTranslateRequest,
-    TextTranslateResponse,
-)
-from tencentcloud.tmt.v20180321.tmt_client import TmtClient
 
 from pdf2zh.cache import TranslationCache
 from pdf2zh.config import ConfigManager
@@ -246,6 +234,8 @@ class DeepLTranslator(BaseTranslator):
     def __init__(
         self, lang_in, lang_out, model, envs=None, ignore_cache=False, **kwargs
     ):
+        import deepl
+
         self.set_envs(envs)
         super().__init__(lang_in, lang_out, model, ignore_cache)
         auth_key = self.envs["DEEPL_AUTH_KEY"]
@@ -314,6 +304,8 @@ class OllamaTranslator(BaseTranslator):
         if not model:
             model = self.envs["OLLAMA_MODEL"]
         super().__init__(lang_in, lang_out, model, ignore_cache)
+        import ollama
+
         self.options = {
             "temperature": 0,  # 随机采样可能会打断公式标记
             "num_predict": 2000,
@@ -362,6 +354,8 @@ class XinferenceTranslator(BaseTranslator):
         if not model:
             model = self.envs["XINFERENCE_MODEL"]
         super().__init__(lang_in, lang_out, model, ignore_cache)
+        import xinference_client
+
         self.options = {"temperature": 0}  # 随机采样可能会打断公式标记
         self.client = xinference_client.RESTfulClient(self.envs["XINFERENCE_HOST"])
         self.prompttext = prompt
@@ -427,6 +421,8 @@ class OpenAITranslator(BaseTranslator):
         if not model:
             model = self.envs["OPENAI_MODEL"]
         super().__init__(lang_in, lang_out, model, ignore_cache)
+        import openai
+
         stop_tokens = (
             stop_tokens
             if stop_tokens is not None
@@ -732,6 +728,9 @@ class AzureTranslator(BaseTranslator):
     ):
         self.set_envs(envs)
         super().__init__(lang_in, lang_out, model, ignore_cache)
+        from azure.ai.translation.text import TextTranslationClient
+        from azure.core.credentials import AzureKeyCredential
+
         endpoint = self.envs["AZURE_ENDPOINT"]
         api_key = self.envs["AZURE_API_KEY"]
         credential = AzureKeyCredential(api_key)
@@ -765,6 +764,13 @@ class TencentTranslator(BaseTranslator):
     ):
         self.set_envs(envs)
         super().__init__(lang_in, lang_out, model)
+        from tencentcloud.common import credential
+        from tencentcloud.tmt.v20180321.models import (
+            TextTranslateRequest,
+            TextTranslateResponse,
+        )
+        from tencentcloud.tmt.v20180321.tmt_client import TmtClient
+
         try:
             cred = credential.DefaultCredentialProvider().get_credential()
         except EnvironmentError:
@@ -783,7 +789,7 @@ class TencentTranslator(BaseTranslator):
 
     def _translate_chunk(self, text):
         self.req.SourceText = text
-        resp: TextTranslateResponse = self.client.TextTranslate(self.req)
+        resp = self.client.TextTranslate(self.req)
         return resp.TargetText
 
     def do_translate(self, text):
