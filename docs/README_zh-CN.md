@@ -48,8 +48,6 @@
 
 - [2026年9月5日] 支持 [MTranServer](https://github.com/xxnuo/MTranServer) 离线翻译服务，纯 CPU 即可运行（`-s mtranserver`）
 
-- [2026年3月23日] 实验性支持 v2.0 翻译内核，使用隔离环境运行（`--mode precise`）。（由[@reycn](https://github.com/reycn) 提交）
-
 - [2026年3月22日] 支持 MiniMax（由[@octo-patch](https://github.com/octo-patch) 提交的PR）
 
 - [2026年3月22日] 修复与 OpenAI 相关的问题（由[@samqin123](https://github.com/samqin123) 提交的PR）
@@ -252,8 +250,6 @@ $env:HF_ENDPOINT = https://hf-mirror.com
 | `--dir`      | [批量翻译]                                                                                                   | `pdf2zh --dir /path/to/translate/`             |
 | `--config`   | [配置文件](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#cofig)                       | `pdf2zh --config /path/to/config/config.json`  |
 | `--serverport` | [自定义 gradio 服务器端口]                                                                                 | `pdf2zh --serverport 7860`                     |
-| `--mode`   | 翻译模式：`fast`（默认，v1）或 `precise`（v2，实验性，需要 pdf2zh_next 子模块）                                | `pdf2zh --mode precise example.pdf`            |
-| `--babeldoc`| 使用实验性后端 [BabelDOC](https://funstory-ai.github.io/BabelDOC/) 翻译 |`pdf2zh --babeldoc` -s openai example.pdf|
 
 有关详细说明，请参阅我们的文档 [高级用法](./ADVANCED.md)，以获取每个选项的完整列表。
 

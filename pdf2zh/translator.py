@@ -1233,3 +1233,53 @@ class MTranServerTranslator(BaseTranslator):
         )
         response.raise_for_status()
         return response.json()["result"]
+
+
+# ---------------------------------------------------------------------------
+# 运行时可用的翻译服务
+#
+# 内网部署默认仅暴露 mtranserver（MTranServer 内网 API）；如需临时启用其它服务，
+# 设置环境变量 PDF2ZH_SERVICES（逗号分隔，如 "mtranserver,deeplx"）即可。
+# 翻译器类列表与上游保持一致，便于同步上游。
+# ---------------------------------------------------------------------------
+import os
+
+_ENABLED_SERVICE_NAMES = {
+    s.strip().lower()
+    for s in os.environ.get("PDF2ZH_SERVICES", "mtranserver").split(",")
+    if s.strip()
+}
+
+# 全量翻译器（与上游保持一致，便于 sync 上游）
+ALL_TRANSLATORS = [
+    GoogleTranslator,
+    BingTranslator,
+    DeepLTranslator,
+    DeepLXTranslator,
+    OllamaTranslator,
+    XinferenceTranslator,
+    AzureOpenAITranslator,
+    OpenAITranslator,
+    ZhipuTranslator,
+    ModelScopeTranslator,
+    MTranServerTranslator,
+    SiliconTranslator,
+    GeminiTranslator,
+    AzureTranslator,
+    TencentTranslator,
+    DifyTranslator,
+    AnythingLLMTranslator,
+    ArgosTranslator,
+    GrokTranslator,
+    GroqTranslator,
+    DeepseekTranslator,
+    MiniMaxTranslator,
+    OpenAIlikedTranslator,
+    QwenMtTranslator,
+    X302AITranslator,
+]
+
+# 运行时实际可用的翻译器（默认仅 mtranserver）
+AVAILABLE_TRANSLATORS = [
+    t for t in ALL_TRANSLATORS if t.name.lower() in _ENABLED_SERVICE_NAMES
+]

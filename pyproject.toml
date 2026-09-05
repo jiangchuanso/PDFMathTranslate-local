@@ -56,7 +56,6 @@ cuda = [
 dml = [
     "onnxruntime-directml",
 ]
-precise = []  # marker — run `pdf2zh-setup-precise` after install to provision the isolated venv
 
 [dependency-groups]
 dev = [
@@ -77,7 +76,6 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 pdf2zh = "pdf2zh.pdf2zh:main"
-pdf2zh-setup-precise = "pdf2zh.kernel.precise:setup_precise_cli"
 
 [tool.flake8]
 ignore = ["E203", "E261", "E501", "W503", "E741"]

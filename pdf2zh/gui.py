@@ -47,30 +47,10 @@ from pdf2zh.translator import (
     QwenMtTranslator,
     X302AITranslator,
 )
-from babeldoc.docvision.doclayout import OnnxModel
-from babeldoc import __version__ as babeldoc_version
 
 logger = logging.getLogger(__name__)
 
 
-class _LazyModel:
-    """Defers model loading until first access so the GUI starts instantly."""
-
-    def __init__(self):
-        self._model = None
-
-    def _ensure_loaded(self):
-        if self._model is None:
-            self._model = OnnxModel.load_available()
-
-    def __getattr__(self, name):
-        if name.startswith("_"):
-            raise AttributeError(name)
-        self._ensure_loaded()
-        return getattr(self._model, name)
-
-
-BABELDOC_MODEL = _LazyModel()
 # The following variables associate strings with translators
 service_map: dict[str, BaseTranslator] = {
     "Google": GoogleTranslator,
@@ -137,6 +117,13 @@ if ConfigManager.get("PDF2ZH_DEMO"):
     }
     client_key = ConfigManager.get("PDF2ZH_CLIENT_KEY")
     server_key = ConfigManager.get("PDF2ZH_SERVER_KEY")
+
+
+# 运行时屏蔽：仅暴露 AVAILABLE_TRANSLATORS 中的翻译服务（默认仅 mtranserver）
+from pdf2zh.translator import AVAILABLE_TRANSLATORS as _AVAILABLE_TRANSLATORS
+
+_service_names = {t.name for t in _AVAILABLE_TRANSLATORS}
+service_map = {k: v for k, v in service_map.items() if v.name in _service_names}
 
 
 # Limit Enabled Services
@@ -234,7 +221,6 @@ def translate_file(
     skip_subset_fonts,
     ignore_cache,
     vfont,
-    mode_choice,
     recaptcha_response,
     state,
     progress=gr.Progress(),
@@ -335,31 +321,11 @@ def translate_file(
     except ValueError:
         threads = 1
 
-    param = {
-        "files": [str(file_raw)],
-        "pages": selected_page,
-        "lang_in": lang_from,
-        "lang_out": lang_to,
-        "service": f"{translator.name}",
-        "output": output,
-        "thread": int(threads),
-        "callback": progress_bar,
-        "cancellation_event": cancellation_event_map[session_id],
-        "envs": _envs,
-        "prompt": Template(prompt) if prompt else None,
-        "skip_subset_fonts": skip_subset_fonts,
-        "ignore_cache": ignore_cache,
-        "vfont": vfont,  # 添加自定义公式字体正则表达式
-        "model": ModelInstance.value,
-    }
-
     try:
-        from pdf2zh.kernel import KernelRegistry
-        from pdf2zh.kernel.protocol import TranslateRequest
+        from pdf2zh.doclayout import ModelInstance
+        from pdf2zh.high_level import translate
 
-        KernelRegistry.switch(mode_choice)
-        kernel = KernelRegistry.get()
-        request = TranslateRequest(
+        translate(
             files=[str(file_raw)],
             output=str(output),
             pages=selected_page,
@@ -367,16 +333,14 @@ def translate_file(
             lang_out=lang_to,
             service=f"{translator.name}",
             thread=int(threads),
+            vfont=vfont,
             envs=_envs,
-            prompt=str(prompt) if prompt else None,
+            prompt=Template(prompt) if prompt else None,
             skip_subset_fonts=skip_subset_fonts,
             ignore_cache=ignore_cache,
-            vfont=vfont,
-        )
-        kernel.translate(
-            request,
             callback=progress_bar,
             cancellation_event=cancellation_event_map[session_id],
+            model=ModelInstance.value,
         )
     except CancelledError:
         del cancellation_event_map[session_id]
@@ -398,111 +362,7 @@ def translate_file(
     )
 
 
-def babeldoc_translate_file(**kwargs):
-    from babeldoc.high_level import init as babeldoc_init
 
-    babeldoc_init()
-    from babeldoc.high_level import async_translate as babeldoc_translate
-    from babeldoc.translation_config import TranslationConfig as YadtConfig
-
-    for translator in [
-        GoogleTranslator,
-        BingTranslator,
-        DeepLTranslator,
-        DeepLXTranslator,
-        OllamaTranslator,
-        XinferenceTranslator,
-        AzureOpenAITranslator,
-        OpenAITranslator,
-        ZhipuTranslator,
-        ModelScopeTranslator,
-        MTranServerTranslator,
-        SiliconTranslator,
-        GeminiTranslator,
-        AzureTranslator,
-        TencentTranslator,
-        DifyTranslator,
-        AnythingLLMTranslator,
-        ArgosTranslator,
-        GrokTranslator,
-        GroqTranslator,
-        DeepseekTranslator,
-        OpenAIlikedTranslator,
-        QwenMtTranslator,
-        X302AITranslator,
-    ]:
-        if kwargs["service"] == translator.name:
-            translator = translator(
-                kwargs["lang_in"],
-                kwargs["lang_out"],
-                "",
-                envs=kwargs["envs"],
-                prompt=kwargs["prompt"],
-                ignore_cache=kwargs["ignore_cache"],
-            )
-            break
-    else:
-        raise ValueError("Unsupported translation service")
-    import asyncio
-    from babeldoc.main import create_progress_handler
-
-    for file in kwargs["files"]:
-        file = file.strip("\"'")
-        yadt_config = YadtConfig(
-            input_file=file,
-            font=None,
-            pages=",".join((str(x) for x in getattr(kwargs, "raw_pages", []))),
-            output_dir=kwargs["output"],
-            doc_layout_model=BABELDOC_MODEL,
-            translator=translator,
-            debug=False,
-            lang_in=kwargs["lang_in"],
-            lang_out=kwargs["lang_out"],
-            no_dual=False,
-            no_mono=False,
-            qps=kwargs["thread"],
-            use_rich_pbar=False,
-            disable_rich_text_translate=not isinstance(translator, OpenAITranslator),
-            skip_clean=kwargs["skip_subset_fonts"],
-            report_interval=0.5,
-        )
-
-        async def yadt_translate_coro(yadt_config):
-            progress_context, progress_handler = create_progress_handler(yadt_config)
-
-            # 开始翻译
-            with progress_context:
-                async for event in babeldoc_translate(yadt_config):
-                    progress_handler(event)
-                    if yadt_config.debug:
-                        logger.debug(event)
-                    kwargs["callback"](progress_context)
-                    if kwargs["cancellation_event"].is_set():
-                        yadt_config.cancel_translation()
-                        raise CancelledError
-                    if event["type"] == "finish":
-                        result = event["translate_result"]
-                        logger.info("Translation Result:")
-                        logger.info(f"  Original PDF: {result.original_pdf_path}")
-                        logger.info(f"  Time Cost: {result.total_seconds:.2f}s")
-                        logger.info(f"  Mono PDF: {result.mono_pdf_path or 'None'}")
-                        logger.info(f"  Dual PDF: {result.dual_pdf_path or 'None'}")
-                        file_mono = result.mono_pdf_path
-                        file_dual = result.dual_pdf_path
-                        break
-            import gc
-
-            gc.collect()
-            return (
-                str(file_mono),
-                str(file_mono),
-                str(file_dual),
-                gr.update(visible=True),
-                gr.update(visible=True),
-                gr.update(visible=True),
-            )
-
-        return asyncio.run(yadt_translate_coro(yadt_config))
 
 
 # Global setup
@@ -559,10 +419,8 @@ demo_recaptcha = """
 tech_details_string = f"""
                     <summary>Technical details</summary>
                     - GitHub: <a href="https://github.com/Byaidu/PDFMathTranslate">Byaidu/PDFMathTranslate</a><br>
-                    - BabelDOC: <a href="https://github.com/funstory-ai/BabelDOC">funstory-ai/BabelDOC</a><br>
                     - GUI by: <a href="https://github.com/reycn">Rongxin</a><br>
                     - pdf2zh Version: {__version__} <br>
-                    - BabelDOC Version: {babeldoc_version}
                 """
 cancellation_event_map = {}
 
@@ -655,12 +513,6 @@ with gr.Blocks(
                 )
                 prompt = gr.Textbox(
                     label="Custom Prompt for llm", interactive=True, visible=False
-                )
-                mode_choice = gr.Dropdown(
-                    label="Translation Mode",
-                    choices=["fast", "precise"],
-                    value="fast",
-                    interactive=True,
                 )
                 envs.append(prompt)
 
@@ -798,7 +650,6 @@ with gr.Blocks(
             skip_subset_fonts,
             ignore_cache,
             vfont,
-            mode_choice,
             recaptcha_response,
             state,
             *envs,

@@ -63,7 +63,6 @@ Scientific PDF document translation preserving layouts.
 <h2 id="updates">2. Recent Updates</h2>
 
 - [September 5, 2026] Supporting [MTranServer](https://github.com/xxnuo/MTranServer), an offline translation server that runs on CPU (`-s mtranserver`).
-- [March 23, 2026] Experimental support for v2.0 translation kernel using isolated environment (`--mode precise`). (by [@reycn](https://github.com/reycn))
 - [March 22, 2026] Supporting MiniMax (PR by [@octo-patch](https://github.com/octo-patch))
 - [March 22, 2026] Fixing OpenAI-related issues (PR by [@samqin123](https://github.com/samqin123))
 - [March 22, 2026] Fixing HTTP-related issues (PR by [@soukouki](https://github.com/soukouki))
@@ -276,8 +275,6 @@ In the following table, we list all advanced options for reference:
 | `--dir`               | [batch translate]                                                                                             | `pdf2zh --dir /path/to/translate/`             |
 | `--config`            | [configuration file](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#cofig)             | `pdf2zh --config /path/to/config/config.json`  |
 | `--serverport`        | [custom gradio server port]                                                                                   | `pdf2zh --serverport 7860`                     |
-| `--mode`              | Translation mode: `fast` (default, v1) or `precise` (v2, experimental, requires pdf2zh_next submodule)         | `pdf2zh --mode precise example.pdf`            |
-| `--babeldoc`          | Use Experimental backend [BabelDOC](https://funstory-ai.github.io/BabelDOC/) to translate                     | `pdf2zh --babeldoc` -s openai example.pdf      |
 | `--mcp`               | Enable MCP STDIO mode                                                                                         | `pdf2zh --mcp`                                 |
 | `--sse`               | Enable MCP SSE mode                                                                                           | `pdf2zh --mcp --sse`                           |
 
