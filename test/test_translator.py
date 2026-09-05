@@ -6,7 +6,12 @@ from ollama import ResponseError as OllamaResponseError
 
 from pdf2zh import cache
 from pdf2zh.config import ConfigManager
-from pdf2zh.translator import BaseTranslator, OllamaTranslator, OpenAIlikedTranslator
+from pdf2zh.translator import (
+    BaseTranslator,
+    MTranServerTranslator,
+    OllamaTranslator,
+    OpenAIlikedTranslator,
+)
 
 # Since it is necessary to test whether the functionality meets the expected requirements,
 # private functions and private methods are allowed to be called.
@@ -150,6 +155,64 @@ class TestOpenAIlikedTranslator(unittest.TestCase):
             self.default_envs["OPENAILIKED_BASE_URL"],
         )
         self.assertIsNone(translator.envs["OPENAILIKED_API_KEY"])
+
+
+class TestMTranServerTranslator(unittest.TestCase):
+    def setUp(self) -> None:
+        ConfigManager.clear()
+        self.default_envs = {
+            "MTRANSERVER_ENDPOINT": "http://127.0.0.1:8989",
+            "MTRANSERVER_API_TOKEN": None,
+        }
+
+    def _build(self, **overrides):
+        return MTranServerTranslator(
+            lang_in="en",
+            lang_out="zh",
+            model=None,
+            envs=dict(self.default_envs, **overrides),
+        )
+
+    def test_default_endpoint_and_lang_map(self):
+        """默认端点拼接 /translate，并映射语言代码"""
+        translator = self._build()
+        self.assertEqual(translator.endpoint, "http://127.0.0.1:8989/translate")
+        self.assertEqual(translator.lang_in, "en")
+        self.assertEqual(translator.lang_out, "zh-Hans")
+
+    def test_traditional_chinese_lang_map(self):
+        """繁体中文映射为 zh-Hant"""
+        translator = MTranServerTranslator(
+            lang_in="en", lang_out="zh-TW", model=None, envs=self.default_envs
+        )
+        self.assertEqual(translator.lang_out, "zh-Hant")
+
+    def test_endpoint_trailing_slash(self):
+        """端点末尾的斜杠不应产生重复的斜杠"""
+        translator = self._build(MTRANSERVER_ENDPOINT="http://127.0.0.1:8989/")
+        self.assertEqual(translator.endpoint, "http://127.0.0.1:8989/translate")
+
+    def test_authorization_header(self):
+        """未配置 token 时不发送认证头，配置后使用 Bearer 认证"""
+        self.assertEqual(self._build().headers, {})
+        translator = self._build(MTRANSERVER_API_TOKEN="test_token")
+        self.assertEqual(translator.headers["Authorization"], "Bearer test_token")
+
+    def test_do_translate(self):
+        translator = self._build()
+        with mock.patch.object(translator, "session") as mock_session:
+            mock_session.post.return_value.json.return_value = {"result": "你好，世界"}
+            self.assertEqual(translator.do_translate("Hello, world"), "你好，世界")
+            mock_session.post.assert_called_once_with(
+                "http://127.0.0.1:8989/translate",
+                json={
+                    "from": "en",
+                    "to": "zh-Hans",
+                    "text": "Hello, world",
+                    "html": False,
+                },
+                headers={},
+            )
 
 
 class TestOllamaTranslator(unittest.TestCase):

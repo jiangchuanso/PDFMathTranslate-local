@@ -46,6 +46,8 @@
 <h2 id="updates">更新</h2>
 
 
+- [2026年9月5日] 支持 [MTranServer](https://github.com/xxnuo/MTranServer) 离线翻译服务，纯 CPU 即可运行（`-s mtranserver`）
+
 - [2026年3月23日] 实验性支持 v2.0 翻译内核，使用隔离环境运行（`--mode precise`）。（由[@reycn](https://github.com/reycn) 提交）
 
 - [2026年3月22日] 支持 MiniMax（由[@octo-patch](https://github.com/octo-patch) 提交的PR）

@@ -232,6 +232,7 @@ pdf2zh example.pdf -li en -lo ja
 |**MiniMax**|`minimax`| `MINIMAX_API_KEY`, `MINIMAX_MODEL` | `[Your MINIMAX_API_KEY]`, `MiniMax-M2.7` |參閱 [MiniMax](https://platform.minimaxi.com/)|
 |**OpenAI-Liked**|`openailiked`| `OPENAILIKED_BASE_URL`, `OPENAILIKED_API_KEY`, `OPENAILIKED_MODEL` | `url`, `[Your Key]`, `model name` | 無 |
 |**OpenAI-Liked**|`openailiked`| `OPENAILIKED_BASE_URL`, `OPENAILIKED_API_KEY`, `OPENAILIKED_MODEL`, `OPENAILIKED_STOP_TOKENS`, `OPENAILIKED_MAX_TOKENS` | `url`, `[Your Key]`, `model name`, ` `, `-1` | 無 |
+|**MTranServer**|`mtranserver`| `MTRANSERVER_ENDPOINT`, `MTRANSERVER_API_TOKEN` | `http://127.0.0.1:8989`, `[Your Token]` |參閱 [MTranServer](https://github.com/xxnuo/MTranServer)，純 CPU 即可運行的離線翻譯服務，僅在伺服器設定 `MT_API_TOKEN` 時才需要填寫 `MTRANSERVER_API_TOKEN`|
 
 對於不在上述表格中，但兼容 OpenAI API 的大語言模型，可以使用與 OpenAI 相同的方式設定環境變數。
 

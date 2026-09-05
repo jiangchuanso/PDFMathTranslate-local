@@ -238,6 +238,7 @@ pdf2zh example.pdf -li en -lo ja
 |**MiniMax**|`minimax`| `MINIMAX_API_KEY`, `MINIMAX_MODEL` | `[Your MINIMAX_API_KEY]`, `MiniMax-M2.7` |See [MiniMax](https://platform.minimaxi.com/)|
 |**OpenAI-Liked**|`openailiked`| `OPENAILIKED_BASE_URL`, `OPENAILIKED_API_KEY`, `OPENAILIKED_MODEL` | `url`, `[Your Key]`, `model name` | None |
 |**OpenAI-Liked**|`openailiked`| `OPENAILIKED_BASE_URL`, `OPENAILIKED_API_KEY`, `OPENAILIKED_MODEL`, `OPENAILIKED_STOP_TOKENS`, `OPENAILIKED_MAX_TOKENS` | `url`, `[Your Key]`, `model name`, `model name`, ` `, `-1` | None |
+|**MTranServer**|`mtranserver`| `MTRANSERVER_ENDPOINT`, `MTRANSERVER_API_TOKEN` | `http://127.0.0.1:8989`, `[Your Token]` |See [MTranServer](https://github.com/xxnuo/MTranServer), an offline translation server that runs on CPU. `MTRANSERVER_API_TOKEN` is only required when the server is started with `MT_API_TOKEN`.|
 
 (need Japenese translation)
 For large language models that are compatible with the OpenAI API but not listed in the table above, you can set environment variables using the same method outlined for OpenAI in the table.

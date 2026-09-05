@@ -1196,3 +1196,40 @@ class QwenMtTranslator(OpenAITranslator):
             extra_body={"translation_options": translation_options},
         )
         return response.choices[0].message.content.strip()
+
+
+class MTranServerTranslator(BaseTranslator):
+    # https://github.com/xxnuo/MTranServer
+    name = "mtranserver"
+    envs = {
+        "MTRANSERVER_ENDPOINT": "http://127.0.0.1:8989",
+        "MTRANSERVER_API_TOKEN": None,
+    }
+    lang_map = {"zh": "zh-Hans", "zh-tw": "zh-Hant"}
+
+    def __init__(
+        self, lang_in, lang_out, model, envs=None, ignore_cache=False, **kwargs
+    ):
+        self.set_envs(envs)
+        super().__init__(lang_in, lang_out, model, ignore_cache)
+        # The environment variable holds the server root, e.g. "http://127.0.0.1:8989"
+        self.endpoint = f"{self.envs['MTRANSERVER_ENDPOINT'].rstrip('/')}/translate"
+        self.session = requests.Session()
+        self.headers = {}
+        token = self.envs["MTRANSERVER_API_TOKEN"]
+        if token:
+            self.headers["Authorization"] = f"Bearer {token}"
+
+    def do_translate(self, text) -> str:
+        response = self.session.post(
+            self.endpoint,
+            json={
+                "from": self.lang_in,
+                "to": self.lang_out,
+                "text": text,
+                "html": False,  # The text to translate is plain text, not HTML
+            },
+            headers=self.headers,
+        )
+        response.raise_for_status()
+        return response.json()["result"]
