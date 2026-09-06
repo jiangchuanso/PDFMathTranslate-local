@@ -1,99 +1,92 @@
-from flask import Flask, request, send_file
-from celery import Celery, Task
-from celery.result import AsyncResult
-from pdf2zh import translate_stream
-import tqdm
-import json
-import io
+from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+from json import loads
 from string import Template
+from threading import Lock
+from uuid import uuid4
+
+from flask import Flask, request, send_file
+
+from pdf2zh import translate_stream
 from pdf2zh.doclayout import ModelInstance
-from pdf2zh.config import ConfigManager
 
 flask_app = Flask("pdf2zh")
-flask_app.config.from_mapping(
-    CELERY=dict(
-        broker_url=ConfigManager.get("CELERY_BROKER", "redis://127.0.0.1:6379/0"),
-        result_backend=ConfigManager.get("CELERY_RESULT", "redis://127.0.0.1:6379/0"),
-    )
-)
+
+# 内网单机部署：不依赖 celery/redis，用线程池 + 内存任务表实现异步翻译。
+# 任务状态保持与原 celery 版兼容：PROGRESS / SUCCESS / FAILURE。
+_TASKS: dict = {}
+_LOCK = Lock()
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pdf2zh")
 
 
-def celery_init_app(app: Flask) -> Celery:
-    class FlaskTask(Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
+def _run_translate(task_id: str, stream: bytes, args: dict):
+    entry = _TASKS[task_id]
 
-    celery_app = Celery(app.name)
-    celery_app.config_from_object(app.config["CELERY"])
-    celery_app.Task = FlaskTask
-    celery_app.set_default()
-    celery_app.autodiscover_tasks()
-    app.extensions["celery"] = celery_app
-    return celery_app
-
-
-celery_app = celery_init_app(flask_app)
-
-
-@celery_app.task(bind=True)
-def translate_task(
-    self: Task,
-    stream: bytes,
-    args: dict,
-):
-    def progress_bar(t: tqdm.tqdm):
-        self.update_state(state="PROGRESS", meta={"n": t.n, "total": t.total})  # noqa
+    def progress_bar(t):
+        with _LOCK:
+            entry["info"] = {"n": t.n, "total": t.total}
         print(f"Translating {t.n} / {t.total} pages")
 
-    if "prompt" in args:
-        args["prompt"] = Template(args["prompt"])
-
-    doc_mono, doc_dual = translate_stream(
-        stream,
-        callback=progress_bar,
-        model=ModelInstance.value,
-        **args,
-    )
-    return doc_mono, doc_dual
+    try:
+        if "prompt" in args:
+            args["prompt"] = Template(args["prompt"])
+        doc_mono, doc_dual = translate_stream(
+            stream,
+            callback=progress_bar,
+            model=ModelInstance.value,
+            **args,
+        )
+        entry["docs"] = (doc_mono, doc_dual)
+        entry["state"] = "SUCCESS"
+    except Exception as e:  # noqa: BLE001
+        entry["state"] = "FAILURE"
+        entry["error"] = str(e)
 
 
 @flask_app.route("/v1/translate", methods=["POST"])
 def create_translate_tasks():
     file = request.files["file"]
     stream = file.stream.read()
-    print(request.form.get("data"))
-    args = json.loads(request.form.get("data"))
-    task = translate_task.delay(stream, args)
-    return {"id": task.id}
+    args = loads(request.form.get("data") or "{}")
+    task_id = uuid4().hex
+    with _LOCK:
+        _TASKS[task_id] = {"state": "PROGRESS", "info": {"n": 0, "total": 0}}
+    _executor.submit(_run_translate, task_id, stream, args)
+    return {"id": task_id}
 
 
-@flask_app.route("/v1/translate/<id>", methods=["GET"])
-def get_translate_task(id: str):
-    result: AsyncResult = celery_app.AsyncResult(id)
-    if str(result.state) == "PROGRESS":
-        return {"state": str(result.state), "info": result.info}
-    else:
-        return {"state": str(result.state)}
+@flask_app.route("/v1/translate/<task_id>", methods=["GET"])
+def get_translate_task(task_id: str):
+    entry = _TASKS.get(task_id)
+    if entry is None:
+        return {"error": "task not found"}, 404
+    resp = {"state": entry["state"]}
+    if entry["state"] == "PROGRESS":
+        resp["info"] = entry["info"]
+    elif entry["state"] == "FAILURE":
+        resp["error"] = entry["error"]
+    return resp
 
 
-@flask_app.route("/v1/translate/<id>", methods=["DELETE"])
-def delete_translate_task(id: str):
-    result: AsyncResult = celery_app.AsyncResult(id)
-    result.revoke(terminate=True)
-    return {"state": str(result.state)}
+@flask_app.route("/v1/translate/<task_id>", methods=["DELETE"])
+def delete_translate_task(task_id: str):
+    with _LOCK:
+        _TASKS.pop(task_id, None)
+    return {"state": "removed"}
 
 
-@flask_app.route("/v1/translate/<id>/<format>")
-def get_translate_result(id: str, format: str):
-    result = celery_app.AsyncResult(id)
-    if not result.ready():
+@flask_app.route("/v1/translate/<task_id>/<format>")
+def get_translate_result(task_id: str, format: str):
+    entry = _TASKS.get(task_id)
+    if entry is None:
+        return {"error": "task not found"}, 404
+    if entry["state"] == "PROGRESS":
         return {"error": "task not finished"}, 400
-    if not result.successful():
-        return {"error": "task failed"}, 400
-    doc_mono, doc_dual = result.get()
+    if entry["state"] != "SUCCESS":
+        return {"error": entry.get("error") or "task failed"}, 400
+    doc_mono, doc_dual = entry["docs"]
     to_send = doc_mono if format == "mono" else doc_dual
-    return send_file(io.BytesIO(to_send), "application/pdf")
+    return send_file(BytesIO(to_send), "application/pdf")
 
 
 if __name__ == "__main__":

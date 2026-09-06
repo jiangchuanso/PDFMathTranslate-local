@@ -28,6 +28,7 @@ dependencies = [
     "peewee>=3.17.8",
     "fontTools",
     "rich",
+    "flask",
 ]
 
 [project.optional-dependencies]
@@ -38,11 +39,6 @@ translators = [
     "xinference-client",
     "azure-ai-translation-text<=1.0.1",
     "tencentcloud-sdk-python-tmt",
-]
-backend = [
-    "flask",
-    "celery",
-    "redis"
 ]
 argostranslate = [
     "argostranslate"
