@@ -733,39 +733,44 @@ def setup_gui(
         demo.launch(server_name="0.0.0.0", max_file_size="5mb", inbrowser=True)
         return
 
-    # Try binding addresses in order: "::" accepts both IPv4+IPv6 on most
-    # dual-stack systems, "0.0.0.0" is IPv4-only, "127.0.0.1" is loopback,
-    # and finally fall back to Gradio's share mode.
-    bind_addresses = []
-    if _has_ipv6():
-        bind_addresses.append("[::]")
-    bind_addresses.append("0.0.0.0")
-    bind_addresses.append("127.0.0.1")
+    # 用 uvicorn 直接托管 Gradio 的 FastAPI 应用（官方 gr.mount_gradio_app 方式），
+    # 绕开 gradio launch() 内部对 localhost 可达性的 httpx 探测 —— 该探测在本机
+    # 存在全局代理/安全软件时会误判 localhost 不可达而启动失败（WinError 10049）。
+    # 注意：必须挂到子路径 "/gradio"。实测 gradio 5.35 挂到根路径 "/" 时前端
+    # 会因 URL 构造 bug 报 "URL constructor: // is not a valid URL" 而一直加载中；
+    # 根路径 "/" 由外层 302 重定向到 /gradio/，不影响直接访问习惯。
+    if user_list:
+        logger.warning(
+            "HTTP auth configured but is not applied under uvicorn hosting; ignoring. "
+            "Remove --authorized to silence this warning."
+        )
+    try:
+        import uvicorn
+        from fastapi import FastAPI
+        from fastapi.responses import RedirectResponse
 
-    for addr in bind_addresses:
+        gr_app = FastAPI()
+
+        @gr_app.get("/", include_in_schema=False)
+        def _root_redirect():
+            return RedirectResponse(url="/gradio/")
+
+        gr.mount_gradio_app(gr_app, demo, path="/gradio")
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to mount Gradio app")
+        raise
+
+    for host in ("0.0.0.0", "127.0.0.1"):
         try:
-            demo.launch(
-                server_name=addr,
-                debug=True,
-                inbrowser=True,
-                share=share,
-                server_port=server_port,
-                **auth_kwargs,
-            )
+            logger.info("Starting Gradio WebUI on http://%s:%s", host, server_port)
+            uvicorn.run(gr_app, host=host, port=server_port, log_level="warning")
             return
-        except Exception:
-            print(
-                f"Error launching GUI using {addr}.\n"
-                "This may be caused by global mode of proxy software."
-            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to run Gradio on %s:%s", host, server_port)
 
-    # Last resort: let Gradio create a share link
-    demo.launch(
-        debug=True,
-        inbrowser=True,
-        share=True,
-        server_port=server_port,
-        **auth_kwargs,
+    raise RuntimeError(
+        f"Gradio failed to bind on 0.0.0.0:{server_port} / 127.0.0.1:{server_port}. "
+        "Most likely the port is already occupied by another process."
     )
 
 
