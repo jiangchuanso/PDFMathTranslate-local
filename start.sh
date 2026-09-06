@@ -34,5 +34,16 @@ export MTRANSERVER_ENDPOINT="${MTRANSERVER_ENDPOINT:-http://127.0.0.1:8989}"
 # --- 仅暴露 mtranserver 翻译服务（默认即如此）---
 export PDF2ZH_SERVICES="${PDF2ZH_SERVICES:-mtranserver}"
 
-echo "Starting pdf2zh online service on 0.0.0.0:11008 ..."
-exec pdf2zh --flask --host 0.0.0.0 --service mtranserver
+# --- URL 翻译结果缓存目录（按 URL 结构存盘，文件大小未变直接复用）---
+export PDF2ZH_CACHE_DIR="${PDF2ZH_CACHE_DIR:-$SCRIPT_DIR/cache}"
+
+echo "Starting Gradio WebUI on http://0.0.0.0:7860 ... (background)"
+pdf2zh -i --serverport 7860 --service mtranserver &
+GRADIO_PID=$!
+cleanup() { kill "$GRADIO_PID" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+echo "Starting pdf2zh Flask API/Web on http://0.0.0.0:11008 ..."
+echo "  - Browser UI   : http://<lan-ip>:11008/"
+echo "  - Translate API: POST http://<lan-ip>:11008/v1/translate"
+pdf2zh --flask --host 0.0.0.0 --service mtranserver

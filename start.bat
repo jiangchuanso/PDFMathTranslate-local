@@ -1,36 +1,44 @@
 @echo off
 setlocal
-title pdf2zh ÔÚÏß·­Òë·şÎñ
+title pdf2zh åœ¨çº¿ç¿»è¯‘æœåŠ¡
 REM ============================================================
-REM Æô¶¯ pdf2zh ÔÚÏß·­Òë·şÎñ£¨ÄÚÍø / ¾ÖÓòÍø£©
-REM - Ê¹ÓÃÏîÄ¿ÄÚĞéÄâ»·¾³ venv£¬²»ÎÛÈ¾È«¾Ö Python
-REM - Ç°ÖÃ£ºMTranServer ·­Òëºó¶ËĞèÒÑÔËĞĞ£¬ÓÉ MTRANSERVER_ENDPOINT Ö¸Ïò
+REM å¯åŠ¨ pdf2zh åœ¨çº¿ç¿»è¯‘æœåŠ¡ï¼ˆå†…ç½‘ / å±€åŸŸç½‘ï¼‰
+REM - ä½¿ç”¨é¡¹ç›®å†…è™šæ‹Ÿç¯å¢ƒ venvï¼Œä¸æ±¡æŸ“å…¨å±€ Python
+REM - å‰ç½®ï¼šMTranServer ç¿»è¯‘åç«¯éœ€å·²è¿è¡Œï¼Œç”± MTRANSERVER_ENDPOINT æŒ‡å‘
 REM ============================================================
 
 set "SCRIPT_DIR=%~dp0"
 set "VENV_DIR=%SCRIPT_DIR%.venv"
 
-REM ĞéÄâ»·¾³²»´æÔÚÔò´´½¨²¢°²×°±¾²Ö¿â
+REM è™šæ‹Ÿç¯å¢ƒä¸å­˜åœ¨åˆ™åˆ›å»ºå¹¶å®‰è£…æœ¬ä»“åº“
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     python -m venv "%VENV_DIR%"
     call "%VENV_DIR%\Scripts\activate.bat"
     pip install "%SCRIPT_DIR%."
-    REM ÄÚÍø¿É¸ÄÓÃ¾µÏñ£º pip install -i https://mirrors.aliyun.com/pypi/simple "%SCRIPT_DIR%."
+    REM å†…ç½‘å¯æ”¹ç”¨é•œåƒï¼š pip install -i https://mirrors.aliyun.com/pypi/simple "%SCRIPT_DIR%."
 ) else (
     call "%VENV_DIR%\Scripts\activate.bat"
 )
 
-REM --- ¿ÉÑ¡£ºÄÚÍøÀëÏß×ÊÔ´£¨²»ÁªÍøÏÂÔØÄ£ĞÍ/×ÖÌå£©---
+REM --- å¯é€‰ï¼šå†…ç½‘ç¦»çº¿èµ„æºï¼ˆä¸è”ç½‘ä¸‹è½½æ¨¡å‹/å­—ä½“ï¼‰---
 REM set PDF2ZH_DOCLAYOUT_MODEL=C:\path\to\doclayout_yolo_docstructbench_imgsz1024.onnx
 REM set NOTO_FONT_PATH=C:\path\to\GoNotoKurrent-Regular.ttf
 
-REM --- MTranServer ·­Òëºó¶ËµØÖ·£¨Ä¬ÈÏ±¾»ú 8989£©---
+REM --- MTranServer ç¿»è¯‘åç«¯åœ°å€ï¼ˆé»˜è®¤æœ¬æœº 8989ï¼‰---
 set "MTRANSERVER_ENDPOINT=http://127.0.0.1:8989"
 REM set MTRANSERVER_API_TOKEN=your_token
 
-REM --- ½ö±©Â¶ mtranserver ·­Òë·şÎñ£¨Ä¬ÈÏ¼´Èç´Ë£©---
+REM --- ä»…æš´éœ² mtranserver ç¿»è¯‘æœåŠ¡ï¼ˆé»˜è®¤å³å¦‚æ­¤ï¼‰---
 set "PDF2ZH_SERVICES=mtranserver"
 
-echo Starting pdf2zh online service on 0.0.0.0:11008 ...
+REM --- URL ç¿»è¯‘ç»“æœç¼“å­˜ç›®å½•ï¼ˆæŒ‰ URL ç»“æ„å­˜ç›˜ï¼Œæ–‡ä»¶å¤§å°æœªå˜ç›´æ¥å¤ç”¨ï¼‰---
+set "PDF2ZH_CACHE_DIR=%SCRIPT_DIR%cache"
+
+echo Starting Gradio WebUI on http://0.0.0.0:7860 ... (new window)
+start "pdf2zh Gradio WebUI" cmd /k pdf2zh -i --serverport 7860 --service mtranserver
+
+echo Starting pdf2zh Flask API/Web on http://0.0.0.0:11008 ...
+echo   - Browser UI  : http://192.168.0.17:11008/
+echo   - Translate API: POST http://192.168.0.17:11008/v1/translate
 pdf2zh --flask --host 0.0.0.0 --service mtranserver
 endlocal
