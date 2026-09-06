@@ -16,7 +16,6 @@ if [ ! -x "$VENV_DIR/bin/python" ]; then
     python3 -m venv "$VENV_DIR"
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
-    pip install --upgrade pip
     pip install "$SCRIPT_DIR/."
     # 内网可改用镜像： pip install -i https://mirrors.aliyun.com/pypi/simple "$SCRIPT_DIR/."
 else

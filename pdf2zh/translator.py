@@ -19,6 +19,28 @@ from tenacity import wait_exponential
 
 logger = logging.getLogger(__name__)
 
+# openai 为可选依赖：仅在实例化 OpenAI 系翻译器时才真正使用。
+# 未安装时不能让模块导入失败（do_translate 的 @retry 装饰器在类定义期求值）。
+try:
+    import openai
+except ImportError:  # pragma: no cover
+    openai = None
+
+if openai is not None:
+    _retry_on_rate_limit = retry(
+        retry=retry_if_exception_type(openai.RateLimitError),
+        stop=stop_after_attempt(100),
+        wait=wait_exponential(multiplier=1, min=1, max=15),
+        before_sleep=lambda retry_state: logger.warning(
+            f"RateLimitError, retrying in {retry_state.next_action.sleep} seconds... "
+            f"(Attempt {retry_state.attempt_number}/100)"
+        ),
+    )
+else:
+
+    def _retry_on_rate_limit(func):
+        return func
+
 
 def remove_control_characters(s):
     return "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
@@ -456,15 +478,7 @@ class OpenAITranslator(BaseTranslator):
         stream_val = self.envs.get("OPENAI_STREAM", "true").lower()
         self.stream = stream_val == "true"
 
-    @retry(
-        retry=retry_if_exception_type(openai.RateLimitError),
-        stop=stop_after_attempt(100),
-        wait=wait_exponential(multiplier=1, min=1, max=15),
-        before_sleep=lambda retry_state: logger.warning(
-            f"RateLimitError, retrying in {retry_state.next_action.sleep} seconds... "
-            f"(Attempt {retry_state.attempt_number}/100)"
-        ),
-    )
+    @_retry_on_rate_limit
     def do_translate(self, text) -> str:
         response = self.client.chat.completions.create(
             model=self.model,

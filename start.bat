@@ -1,35 +1,34 @@
 @echo off
 setlocal
-title pdf2zh åœ¨çº¿ç¿»è¯‘æœåŠ¡
+title pdf2zh ÔÚÏß·­Òë·şÎñ
 REM ============================================================
-REM å¯åŠ¨ pdf2zh åœ¨çº¿ç¿»è¯‘æœåŠ¡ï¼ˆå†…ç½‘ / å±€åŸŸç½‘ï¼‰
-REM - ä½¿ç”¨é¡¹ç›®å†…è™šæ‹Ÿç¯å¢ƒ venvï¼Œä¸æ±¡æŸ“å…¨å±€ Python
-REM - å‰ç½®ï¼šMTranServer ç¿»è¯‘åç«¯éœ€å·²è¿è¡Œï¼Œç”± MTRANSERVER_ENDPOINT æŒ‡å‘
+REM Æô¶¯ pdf2zh ÔÚÏß·­Òë·şÎñ£¨ÄÚÍø / ¾ÖÓòÍø£©
+REM - Ê¹ÓÃÏîÄ¿ÄÚĞéÄâ»·¾³ venv£¬²»ÎÛÈ¾È«¾Ö Python
+REM - Ç°ÖÃ£ºMTranServer ·­Òëºó¶ËĞèÒÑÔËĞĞ£¬ÓÉ MTRANSERVER_ENDPOINT Ö¸Ïò
 REM ============================================================
 
 set "SCRIPT_DIR=%~dp0"
 set "VENV_DIR=%SCRIPT_DIR%.venv"
 
-REM è™šæ‹Ÿç¯å¢ƒä¸å­˜åœ¨åˆ™åˆ›å»ºå¹¶å®‰è£…æœ¬ä»“åº“
+REM ĞéÄâ»·¾³²»´æÔÚÔò´´½¨²¢°²×°±¾²Ö¿â
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     python -m venv "%VENV_DIR%"
     call "%VENV_DIR%\Scripts\activate.bat"
-    pip install --upgrade pip
     pip install "%SCRIPT_DIR%."
-    REM å†…ç½‘å¯æ”¹ç”¨é•œåƒï¼š pip install -i https://mirrors.aliyun.com/pypi/simple "%SCRIPT_DIR%."
+    REM ÄÚÍø¿É¸ÄÓÃ¾µÏñ£º pip install -i https://mirrors.aliyun.com/pypi/simple "%SCRIPT_DIR%."
 ) else (
     call "%VENV_DIR%\Scripts\activate.bat"
 )
 
-REM --- å¯é€‰ï¼šå†…ç½‘ç¦»çº¿èµ„æºï¼ˆä¸è”ç½‘ä¸‹è½½æ¨¡å‹/å­—ä½“ï¼‰---
+REM --- ¿ÉÑ¡£ºÄÚÍøÀëÏß×ÊÔ´£¨²»ÁªÍøÏÂÔØÄ£ĞÍ/×ÖÌå£©---
 REM set PDF2ZH_DOCLAYOUT_MODEL=C:\path\to\doclayout_yolo_docstructbench_imgsz1024.onnx
 REM set NOTO_FONT_PATH=C:\path\to\GoNotoKurrent-Regular.ttf
 
-REM --- MTranServer ç¿»è¯‘åç«¯åœ°å€ï¼ˆé»˜è®¤æœ¬æœº 8989ï¼‰---
+REM --- MTranServer ·­Òëºó¶ËµØÖ·£¨Ä¬ÈÏ±¾»ú 8989£©---
 set "MTRANSERVER_ENDPOINT=http://127.0.0.1:8989"
 REM set MTRANSERVER_API_TOKEN=your_token
 
-REM --- ä»…æš´éœ² mtranserver ç¿»è¯‘æœåŠ¡ï¼ˆé»˜è®¤å³å¦‚æ­¤ï¼‰---
+REM --- ½ö±©Â¶ mtranserver ·­Òë·şÎñ£¨Ä¬ÈÏ¼´Èç´Ë£©---
 set "PDF2ZH_SERVICES=mtranserver"
 
 echo Starting pdf2zh online service on 0.0.0.0:11008 ...
