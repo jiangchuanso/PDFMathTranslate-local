@@ -8,7 +8,7 @@ REM - 前置：MTranServer 翻译后端需已运行，由 MTRANSERVER_ENDPOINT �
 REM ============================================================
 
 set "SCRIPT_DIR=%~dp0"
-set "VENV_DIR=%SCRIPT_DIR%venv"
+set "VENV_DIR=%SCRIPT_DIR%.venv"
 
 REM 虚拟环境不存在则创建并安装本仓库
 if not exist "%VENV_DIR%\Scripts\python.exe" (
