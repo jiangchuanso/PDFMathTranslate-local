@@ -2,9 +2,27 @@
 set -euo pipefail
 # ============================================================
 # 启动 pdf2zh 在线翻译服务（内网 / 局域网）
-# 前置条件：MTranServer 翻译后端需已运行，并通过下面的
-#           MTRANSERVER_ENDPOINT 指向其地址。
+# - 使用项目内虚拟环境 venv，不污染全局 Python
+# - 前置：MTranServer 翻译后端需已运行，由 MTRANSERVER_ENDPOINT 指向
 # ============================================================
+
+# 设置终端窗口标题（xterm 兼容终端生效）
+printf '\033]0;%s\007' 'pdf2zh 在线翻译服务'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="$SCRIPT_DIR/venv"
+
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+    python3 -m venv "$VENV_DIR"
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+    pip install --upgrade pip
+    pip install "$SCRIPT_DIR/."
+    # 内网可改用镜像： pip install -i https://mirrors.aliyun.com/pypi/simple "$SCRIPT_DIR/."
+else
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+fi
 
 # --- 可选：内网离线资源（不联网下载模型/字体）---
 # export PDF2ZH_DOCLAYOUT_MODEL=/path/to/doclayout_yolo_docstructbench_imgsz1024.onnx
