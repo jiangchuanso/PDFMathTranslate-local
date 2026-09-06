@@ -117,6 +117,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="flask",
     )
     parse_params.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Host to bind the online service (default: 0.0.0.0).",
+    )
+    parse_params.add_argument(
         "--celery",
         action="store_true",
         help="celery",
@@ -286,7 +292,7 @@ def main(args: Optional[List[str]] = None) -> int:
     if parsed_args.flask:
         from pdf2zh.backend import flask_app
 
-        flask_app.run(port=11008)
+        flask_app.run(host=parsed_args.host, port=11008)
         return 0
 
     if parsed_args.celery:
