@@ -2,7 +2,8 @@ param(
     [string]$PythonVersion,
     [switch]$CleanBabelDoc,
     [switch]$GenerateOfflineAssets,
-    [switch]$DownloadVCRedist
+    [switch]$DownloadVCRedist,
+    [switch]$FetchStaticAssets
 )
 
 Write-Host "==== Creating directories ===="
@@ -58,6 +59,13 @@ uv venv ./dep_build/venv
 
 Write-Host "==== Installing project dependencies ===="
 uv pip install .
+
+if ($FetchStaticAssets) {
+    Write-Host "==== Fetching front-end static assets (CDN -> local) ===="
+    # Must run before site-packages is copied, so pdf2zh/static/ ends up in
+    # the build output as well.
+    uv run --active python ./script/fetch_static_assets.py
+}
 
 Write-Host "==== Copying site-packages to build ===="
 Copy-Item -Path "./dep_build/venv/Lib/site-packages" -Destination "./build/site-packages" -Recurse -Force

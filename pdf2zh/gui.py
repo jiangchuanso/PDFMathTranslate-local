@@ -2,7 +2,6 @@ import asyncio
 import cgi
 import os
 import shutil
-import socket
 import uuid
 from asyncio import CancelledError
 from pathlib import Path
@@ -17,6 +16,7 @@ import logging
 
 from pdf2zh import __version__
 from pdf2zh.high_level import translate
+from pdf2zh.offline_assets import prepare_offline_gui_assets
 from pdf2zh.doclayout import ModelInstance
 from pdf2zh.config import ConfigManager
 from pdf2zh.translator import (
@@ -517,6 +517,25 @@ custom_blue = gr.themes.Color(
     c950="#020B33",
 )
 
+# Font stacks used by the GUI. Plain strings are treated as *local* fonts by
+# Gradio; using a GoogleFont here would make the page request
+# https://fonts.googleapis.com, which never resolves in an intranet.
+system_fonts = (
+    "ui-sans-serif",
+    "system-ui",
+    "-apple-system",
+    "Segoe UI",
+    "Noto Sans CJK SC",
+    "Microsoft YaHei",
+    "sans-serif",
+)
+system_mono_fonts = (
+    "ui-monospace",
+    "Consolas",
+    "Menlo",
+    "monospace",
+)
+
 custom_css = """
     .secondary-text {color: #999 !important;}
     footer {visibility: hidden}
@@ -568,7 +587,11 @@ cancellation_event_map = {}
 with gr.Blocks(
     title="PDFMathTranslate - PDF Translation with preserved formats",
     theme=gr.themes.Default(
-        primary_hue=custom_blue, spacing_size="md", radius_size="lg"
+        primary_hue=custom_blue,
+        spacing_size="md",
+        radius_size="lg",
+        font=system_fonts,
+        font_mono=system_mono_fonts,
     ),
     css=custom_css,
     head=demo_recaptcha if flag_demo else "",
@@ -846,16 +869,6 @@ def parse_user_passwd(file_path: str) -> tuple:
     return tuple_list, content
 
 
-def _has_ipv6() -> bool:
-    """Check whether the system can bind an IPv6 socket."""
-    try:
-        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-        sock.close()
-        return True
-    except OSError:
-        return False
-
-
 def setup_gui(
     share: bool = False, auth_file: list = ["", ""], server_port=7860
 ) -> None:
@@ -869,6 +882,23 @@ def setup_gui(
     Outputs:
         - None
     """
+    # Gradio's launch-time localhost probe uses httpx, which honors
+    # HTTP(S)_PROXY env vars. With global-mode proxy software the probe
+    # to 127.0.0.1 is routed to the proxy and fails, so exclude loopback
+    # addresses from proxying before launching.
+    for var in ("NO_PROXY", "no_proxy"):
+        existing = os.environ.get(var, "")
+        tokens = {t.strip() for t in existing.split(",") if t.strip()}
+        tokens.update(("127.0.0.1", "localhost", "::1"))
+        os.environ[var] = ",".join(sorted(tokens))
+
+    # Serve front-end assets (e.g. the pdf.js worker) from disk instead of
+    # public CDNs, and keep Gradio from calling home.
+    try:
+        prepare_offline_gui_assets()
+    except Exception as e:  # never block the GUI on asset preparation
+        logger.warning("Could not prepare offline GUI assets: %s", e)
+
     user_list, html = parse_user_passwd(auth_file)
 
     auth_kwargs = {}
@@ -879,14 +909,12 @@ def setup_gui(
         demo.launch(server_name="0.0.0.0", max_file_size="5mb", inbrowser=True)
         return
 
-    # Try binding addresses in order: "::" accepts both IPv4+IPv6 on most
-    # dual-stack systems, "0.0.0.0" is IPv4-only, "127.0.0.1" is loopback,
-    # and finally fall back to Gradio's share mode.
-    bind_addresses = []
-    if _has_ipv6():
-        bind_addresses.append("[::]")
-    bind_addresses.append("0.0.0.0")
-    bind_addresses.append("127.0.0.1")
+    # Try binding addresses in order. NOTE: do NOT use "[::]" here.
+    # Gradio 5.x builds its launch-time startup probe URL from the server
+    # name (http://[::]:port), and connecting to the *unspecified* IPv6
+    # address "::" always fails (WinError 10049 on Windows). "0.0.0.0"
+    # probes via "localhost" and "127.0.0.1" probes via itself — both work.
+    bind_addresses = ["0.0.0.0", "127.0.0.1"]
 
     for addr in bind_addresses:
         try:
@@ -904,14 +932,21 @@ def setup_gui(
                 f"Error launching GUI using {addr}.\n"
                 "This may be caused by global mode of proxy software."
             )
+            # A failed launch() leaves gradio with is_running=True and a
+            # cached local_url; retrying without close() would reuse the
+            # broken URL ("Rerunning server...") and fail identically.
+            try:
+                demo.close()
+            except Exception:
+                pass
 
-    # Last resort: let Gradio create a share link
-    demo.launch(
-        debug=True,
-        inbrowser=True,
-        share=True,
-        server_port=server_port,
-        **auth_kwargs,
+    # All bind attempts failed. Do NOT fall back to share=True silently:
+    # it publishes the GUI on a public *.gradio.live link (privacy risk).
+    raise RuntimeError(
+        "Could not bind the Gradio GUI to any local address.\n"
+        "Check whether the port is already in use, or whether proxy\n"
+        "software intercepts localhost connections (add 127.0.0.1/localhost\n"
+        "to the proxy bypass list or set NO_PROXY), then restart."
     )
 
 
