@@ -65,17 +65,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync
+          uv sync --extra argostranslate
 
       - name: Test - Unit Test
         run: |
           uv run pytest .
 
       - name: Test - Translate a PDF file with plain text only
-        run: uv run pdf2zh ./test/file/translate.cli.plain.text.pdf -o ./test/file
+        run: uv run pdf2zh ./test/file/translate.cli.plain.text.pdf -o ./test/file -s argos
 
       - name: Test - Translate a PDF file figure
-        run: uv run pdf2zh ./test/file/translate.cli.text.with.figure.pdf -o ./test/file
+        run: uv run pdf2zh ./test/file/translate.cli.text.with.figure.pdf -o ./test/file -s argos
 
       # - name: Test - Translate a PDF file with unknown font
       #   run:

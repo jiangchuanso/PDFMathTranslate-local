@@ -923,7 +923,7 @@ class ArgosTranslator(BaseTranslator):
 
     def translate(self, text: str, ignore_cache: bool = False):
         # Translate
-        import argotranslate.translate  # noqa: F401
+        import argostranslate.translate  # noqa: F401
 
         installed_languages = (
             argostranslate.translate.get_installed_languages()  # noqa: F821

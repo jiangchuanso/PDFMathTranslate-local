@@ -84,7 +84,7 @@ jobs:
           ./dep_build/venv/Scripts/activate
 
           Write-Host "==== 在 venv 环境中安装项目依赖 ===="
-          uv pip install .
+          uv pip install ".[argostranslate]"
 
           Write-Host "==== 复制 venv/Lib/site-packages 到 build/ ===="
           Copy-Item -Path "./dep_build/venv/Lib/site-packages" -Destination "./build/site-packages" -Recurse -Force
@@ -130,11 +130,11 @@ jobs:
       
       - name: Test - Translate a PDF file with plain text only
         run: |
-          ./build/pdf2zh.exe ./test/file/translate.cli.plain.text.pdf -o ./test/file
+          ./build/pdf2zh.exe ./test/file/translate.cli.plain.text.pdf -o ./test/file -s argos
 
       - name: Test - Translate a PDF file figure
         run: |
-          ./build/pdf2zh.exe ./test/file/translate.cli.text.with.figure.pdf -o ./test/file
+          ./build/pdf2zh.exe ./test/file/translate.cli.text.with.figure.pdf -o ./test/file -s argos
 
       - name: Delete offline assets and cache
         shell: pwsh
