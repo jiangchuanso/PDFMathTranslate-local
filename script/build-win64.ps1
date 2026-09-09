@@ -3,7 +3,9 @@ param(
     [switch]$CleanBabelDoc,
     [switch]$GenerateOfflineAssets,
     [switch]$DownloadVCRedist,
-    [switch]$FetchStaticAssets
+    [switch]$FetchStaticAssets,
+    [switch]$FetchOfflineModels,
+    [string]$Extras = "argostranslate,firefox"
 )
 
 Write-Host "==== Creating directories ===="
@@ -20,7 +22,9 @@ if ($CleanBabelDoc) {
 }
 
 Write-Host "==== Copying source to dep_build ===="
-Get-ChildItem -Path "./" -Exclude "dep_build", "build" | Copy-Item -Destination "./dep_build" -Recurse -Force
+# "offline-models" only holds the (huge) staged weights for the local engines,
+# it is not source code and must not be copied around.
+Get-ChildItem -Path "./" -Exclude "dep_build", "build", "offline-models" | Copy-Item -Destination "./dep_build" -Recurse -Force
 
 Write-Host "==== Downloading and extracting Python $PythonVersion ===="
 $pythonUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
@@ -58,7 +62,14 @@ uv venv ./dep_build/venv
 ./dep_build/venv/Scripts/activate
 
 Write-Host "==== Installing project dependencies ===="
-uv pip install .
+# The local engines (argos / firefox) live in optional extras; an intranet build
+# has to ship them, so they are installed by default. Pass -Extras "" to skip.
+if ($Extras) {
+    Write-Host "extras: $Extras"
+    uv pip install ".[$Extras]"
+} else {
+    uv pip install .
+}
 
 if ($FetchStaticAssets) {
     Write-Host "==== Fetching front-end static assets (CDN -> local) ===="
@@ -83,6 +94,13 @@ if (Test-Path $staticFile) {
 if ($GenerateOfflineAssets) {
     Write-Host "==== Generating offline assets ===="
     uv run --active babeldoc --generate-offline-assets ./build
+}
+
+if ($FetchOfflineModels) {
+    Write-Host "==== Fetching offline translation models (argos + firefox zh<->en) ===="
+    # The bundle lands next to pdf2zh.exe so the intranet build never needs the
+    # network to translate.
+    uv run --active python ./script/fetch_offline_models.py --work-dir ./offline-models --out ./build/offline-models.zip
 }
 
 Write-Host "==== Build complete ===="

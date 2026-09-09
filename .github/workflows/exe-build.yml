@@ -31,6 +31,13 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v6
 
+      - name: Cached offline translation models
+        id: cache-models
+        uses: actions/cache@v5
+        with:
+          path: ./offline-models
+          key: offline-models-${{ hashFiles('script/fetch_offline_models.py') }}
+
       - name: Setup uv with Python ${{ env.WIN_EXE_PYTHON_VERSION }}
         uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
         with:
@@ -54,7 +61,7 @@ jobs:
           New-Item -Path "./dep_build" -ItemType Directory -Force
 
           Write-Host "==== 复制代码到 dep_build ===="
-          Get-ChildItem -Path "./" -Exclude "dep_build", "build" | Copy-Item -Destination "./dep_build" -Recurse -Force
+          Get-ChildItem -Path "./" -Exclude "dep_build", "build", "offline-models" | Copy-Item -Destination "./dep_build" -Recurse -Force
 
           Write-Host "==== 下载并解压 Python ${{ env.WIN_EXE_PYTHON_VERSION }} ===="
           Write-Host "pythonUrl: https://www.python.org/ftp/python/${{ env.WIN_EXE_PYTHON_VERSION }}/python-${{ env.WIN_EXE_PYTHON_VERSION }}-embed-amd64.zip"
@@ -84,7 +91,7 @@ jobs:
           ./dep_build/venv/Scripts/activate
 
           Write-Host "==== 在 venv 环境中安装项目依赖 ===="
-          uv pip install ".[argostranslate]"
+          uv pip install ".[argostranslate,firefox]"
 
           Write-Host "==== 复制 venv/Lib/site-packages 到 build/ ===="
           Copy-Item -Path "./dep_build/venv/Lib/site-packages" -Destination "./build/site-packages" -Recurse -Force
@@ -100,6 +107,9 @@ jobs:
           }
 
           uv run --active babeldoc --generate-offline-assets ./build
+
+          Write-Host "==== 打包离线翻译模型 (argos + firefox zh<->en, INT8) ===="
+          uv run --active python ./script/fetch_offline_models.py --work-dir ./offline-models --out ./build/offline-models.zip
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
@@ -135,6 +145,10 @@ jobs:
       - name: Test - Translate a PDF file figure
         run: |
           ./build/pdf2zh.exe ./test/file/translate.cli.text.with.figure.pdf -o ./test/file -s argos
+
+      - name: Test - Translate with the local firefox engine
+        run: |
+          ./build/pdf2zh.exe ./test/file/translate.cli.plain.text.pdf -o ./test/file -s firefox
 
       - name: Delete offline assets and cache
         shell: pwsh

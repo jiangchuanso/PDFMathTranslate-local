@@ -29,6 +29,7 @@ SERVICE_NAME_MAP: dict[str, str] = {
     "dify": "dify",
     "anythingllm": "anythingllm",
     "argos": "argos",
+    "firefox": "firefox",
     "grok": "grok",
     "groq": "groq",
     "deepseek": "deepseek",
@@ -80,6 +81,12 @@ _ENGINE_ENV_NAMES: set[str] = {
     "ALIYUN_DASHSCOPE_MODEL",
     "MODELSCOPE_API_KEY",
     "MODELSCOPE_MODEL",
+    # local engines need no key, but the knobs must reach the subprocess
+    "FIREFOX_DEVICE",
+    "FIREFOX_COMPUTE_TYPE",
+    "FIREFOX_INTER_THREADS",
+    "FIREFOX_INTRA_THREADS",
+    "FIREFOX_BEAM_SIZE",
 }
 
 

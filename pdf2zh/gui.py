@@ -29,6 +29,7 @@ from pdf2zh.translator import (
     DeepLXTranslator,
     DifyTranslator,
     ArgosTranslator,
+    FirefoxTranslator,
     GeminiTranslator,
     GoogleTranslator,
     MiniMaxTranslator,
@@ -89,6 +90,7 @@ service_map: dict[str, BaseTranslator] = {
     "Dify": DifyTranslator,
     "AnythingLLM": AnythingLLMTranslator,
     "Argos Translate": ArgosTranslator,
+    "Firefox Translations": FirefoxTranslator,
     "Grok": GrokTranslator,
     "Groq": GroqTranslator,
     "DeepSeek": DeepseekTranslator,
@@ -140,7 +142,13 @@ if ConfigManager.get("PDF2ZH_DEMO"):
 # Limit Enabled Services
 enabled_services: T.Optional[T.List[str]] = ConfigManager.get("ENABLED_SERVICES")
 if isinstance(enabled_services, list):
-    default_services = ["Google", "Bing"]
+    # Services always offered in addition to the allow-list. Set this to an empty
+    # array (or remove the entry) in config to restrict the UI to exactly the
+    # allow-list - useful for an offline/intranet deployment where the cloud
+    # engines should never show up.
+    default_services = ConfigManager.get("DEFAULT_SERVICES", ["Google", "Bing"])
+    if isinstance(default_services, str):
+        default_services = [default_services]
     enabled_services_names = [str(_).lower().strip() for _ in enabled_services]
     enabled_services = [
         k
@@ -149,7 +157,7 @@ if isinstance(enabled_services, list):
     ]
     if len(enabled_services) == 0:
         raise RuntimeError("No services available.")
-    enabled_services = default_services + enabled_services
+    enabled_services = list(default_services) + enabled_services
 else:
     enabled_services = list(service_map.keys())
 
@@ -421,6 +429,7 @@ def babeldoc_translate_file(**kwargs):
         DifyTranslator,
         AnythingLLMTranslator,
         ArgosTranslator,
+        FirefoxTranslator,
         GrokTranslator,
         GroqTranslator,
         DeepseekTranslator,

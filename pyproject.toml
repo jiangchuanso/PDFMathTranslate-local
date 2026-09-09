@@ -50,6 +50,9 @@ backend = [
 argostranslate = [
     "argostranslate"
 ]
+firefox = [
+    "firefox-translations"
+]
 mcp = [
     "mcp>=1.6.0",
 ]

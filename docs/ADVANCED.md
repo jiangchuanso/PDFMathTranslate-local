@@ -14,6 +14,8 @@
 - [Custom configuration file](#cofig)
 - [Fonts Subseting](#fonts-subset)
 - [Translation cache](#cache)
+- [Offline models (local engines)](#offline-models)
+- [Limit available services](#limit-services)
 
 ---
 
@@ -71,6 +73,7 @@ We've provided a detailed table on the required [environment variables](https://
 | **Dify**             | `dify`         | `DIFY_API_URL`, `DIFY_API_KEY`                                        | `[Your DIFY URL]`, `[Your Key]`                          | See [Dify](https://github.com/langgenius/dify),Three variables, lang_out, lang_in, and text, need to be defined in Dify's workflow input.                                                                 |
 | **AnythingLLM**      | `anythingllm`  | `AnythingLLM_URL`, `AnythingLLM_APIKEY`                               | `[Your AnythingLLM URL]`, `[Your Key]`                   | See [anything-llm](https://github.com/Mintplex-Labs/anything-llm)                                                                                                                                         |
 |**Argos Translate**|`argos`| | |See [argos-translate](https://github.com/argosopentech/argos-translate)|
+|**Firefox Translations**|`firefox`| `FIREFOX_DEVICE`, `FIREFOX_COMPUTE_TYPE`, `FIREFOX_INTER_THREADS`, `FIREFOX_INTRA_THREADS`, `FIREFOX_BEAM_SIZE` | `cpu`, `int8`, `1`, `0`, `1` |See [firefox-translations](https://pypi.org/project/firefox-translations/). Local CPU engine; the zh&#8596;en weights come from the offline bundle (see [Offline models](#offline-models))|
 |**Grok**|`grok`| `GROK_API_KEY`, `GROK_MODEL`, `GROK_BASE_URL` (optional) | `[Your GROK_API_KEY]`, `grok-2-1212`, `https://api.x.ai/v1` |See [Grok](https://docs.x.ai/docs/overview). **Note:** When using custom proxy, ensure `GROK_BASE_URL` ends with `/v1` (e.g., `http://your-proxy:8000/v1`)|
 |**Groq**|`groq`| `GROQ_API_KEY`, `GROQ_MODEL` | `[Your GROQ_API_KEY]`, `llama-3-3-70b-versatile` |See [Groq](https://console.groq.com/docs/models)|
 |**DeepSeek**|`deepseek`| `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` | `[Your DEEPSEEK_API_KEY]`, `deepseek-chat` |See [DeepSeek](https://www.deepseek.com/)|
@@ -370,3 +373,108 @@ To test if the mcp server works, you can open claude desktop and tell
 ```
 find the `test.pdf` in my Document folder and translate it to Chinese
 ```
+
+---
+
+<h3 id="offline-models">Offline models (local engines)</h3>
+
+The `argos` and `firefox` engines run entirely on your machine, so on an
+intranet host their weights must not be downloaded at run time. Ship them in a
+single bundle instead:
+
+```bash
+# writes offline-models.zip (zh<->en for both local engines)
+python script/fetch_offline_models.py
+
+# other languages / engines
+python script/fetch_offline_models.py --pairs en-zh zh-en fr-en
+python script/fetch_offline_models.py --skip-argos --out D:/offline-models.zip
+```
+
+Layout of the archive:
+
+```
+offline-models.zip
+├── firefox/en-zh/  model.bin source.spm target.spm
+│                   shared_vocabulary.json config.json
+├── firefox/zh-en/  ...
+├── argos/translate-en_zh-1_9.argosmodel
+└── argos/translate-zh_en-1_9.argosmodel
+```
+
+Put `offline-models.zip` next to `pdf2zh.exe` (or next to the installed
+`pdf2zh` package). It is extracted once on first use and re-used afterwards.
+Override the location with `PDF2ZH_MODELS_ZIP` (a zip file) or
+`PDF2ZH_MODELS_DIR` (an already extracted directory).
+
+Model choice: by default the script fetches the **INT8** build
+(`jiangzhuo9357/opus-mt-*-ct2`) - the very same standard model quantised to
+8&nbsp;bit, so it is half the size (~80&nbsp;MB per direction instead of
+~155&nbsp;MB) and noticeably faster on the CPU at practically the same quality.
+Pass `--prefer quality` to prefer the large `opus-mt-tc-big-*` variant when it
+exists for a pair (it does not for zh&#8596;en). Both engines run on the CPU -
+set `FIREFOX_COMPUTE_TYPE` to `int8` (default, matches the bundled model) or
+`float32`, and raise `FIREFOX_BEAM_SIZE` for slightly better output.
+
+For the Windows build, pass `-FetchOfflineModels` to `script/build-win64.ps1`
+and the bundle is written straight into `./build`, i.e. next to `pdf2zh.exe`.
+
+---
+
+<h3 id="limit-services">Limit available services</h3>
+
+In an offline/intranet deployment you usually want only the local engines and
+the self-hosted ones to show up, hiding the cloud providers (Google, DeepL,
+OpenAI, ...). The config key `ENABLED_SERVICES` does exactly that - the web UI
+(Gradio) only lists the engines whose display name is in this list.
+
+```json
+{
+  "ENABLED_SERVICES": ["Argos Translate", "Firefox Translations", "Ollama", "Xinference", "OpenAI-liked"],
+  "DEFAULT_SERVICES": []
+}
+```
+
+`DEFAULT_SERVICES` is always prepended to the allow-list. It defaults to
+`["Google", "Bing"]` for backward compatibility, i.e. Google/Bing are offered
+even when `ENABLED_SERVICES` is set. Set it to `[]` (as above) to restrict the
+UI to *exactly* the allow-list - this is what hides the non-local engines.
+
+Matching is case-insensitive and uses the engine's display name from the
+service list (e.g. `"Argos Translate"`, `"Firefox Translations"`, `"OpenAI-liked"`).
+
+A ready-to-use example is shipped at [`config.sample.json`](https://github.com/Byaidu/PDFMathTranslate/blob/main/config.sample.json)
+in the repository root. Copy it to `~/.config/PDFMathTranslate/config.json`
+(per-user) or load it with `-c /path/to/config.json` (CLI).
+
+**Self-hosted engines load straight from config.** For Ollama, Xinference and
+llama.cpp there is no separate setup step - just add their connection details
+under the `translators` array and they become selectable:
+
+```json
+{
+  "ENABLED_SERVICES": ["Ollama", "Xinference", "OpenAI-liked"],
+  "DEFAULT_SERVICES": [],
+  "translators": [
+    { "name": "ollama",
+      "envs": { "OLLAMA_HOST": "http://127.0.0.1:11434", "OLLAMA_MODEL": "gemma2" } },
+    { "name": "xinference",
+      "envs": { "XINFERENCE_HOST": "http://127.0.0.1:9997", "XINFERENCE_MODEL": "gemma-2-it" } },
+    { "name": "openailiked",
+      "envs": { "OPENAILIKED_BASE_URL": "http://127.0.0.1:8080/v1",
+                "OPENAILIKED_API_KEY": "sk-noauth",
+                "OPENAILIKED_MODEL": "llama-3.1",
+                "OPENAILIKED_STREAM": "false",
+                "OPENAILIKED_STOP_TOKENS": "",
+                "OPENAILIKED_MAX_TOKENS": "-1" } }
+  ]
+}
+```
+
+- **llama.cpp** has no native engine; point the **OpenAI-liked** service at its
+  OpenAI-compatible endpoint (`OPENAILIKED_BASE_URL`, typically `.../v1`).
+- The `translators[].envs` block overrides the engine defaults entirely, so
+  include every variable you want set.
+
+> Note: `ENABLED_SERVICES` governs the **web UI**. The CLI (`pdf2zh -s <service>`)
+> selects the engine directly and is not filtered by this list.

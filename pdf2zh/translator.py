@@ -23,6 +23,7 @@ from tencentcloud.tmt.v20180321.tmt_client import TmtClient
 
 from pdf2zh.cache import TranslationCache
 from pdf2zh.config import ConfigManager
+from pdf2zh import offline_models
 
 
 from tenacity import retry, retry_if_exception_type
@@ -904,6 +905,34 @@ class ArgosTranslator(BaseTranslator):
         lang_out = self.lang_map.get(lang_out.lower(), lang_out)
         self.lang_in = lang_in
         self.lang_out = lang_out
+        self._provision_model(argostranslate, self.lang_in, self.lang_out)
+
+    @staticmethod
+    def _is_installed(argostranslate, lang_in: str, lang_out: str) -> bool:
+        """Whether the pair already lives in argos' package directory."""
+        try:
+            for package in argostranslate.package.get_installed_packages():
+                if (
+                    getattr(package, "from_code", None) == lang_in
+                    and getattr(package, "to_code", None) == lang_out
+                ):
+                    return True
+        except Exception as e:
+            # A broken package directory must not prevent start-up.
+            logger.debug("Could not enumerate installed argos packages: %s", e)
+        return False
+
+    def _provision_model(self, argostranslate, lang_in: str, lang_out: str):
+        """Install the pair from the offline bundle, else from the remote index."""
+        bundled = offline_models.ensure_argos_model(lang_in, lang_out)
+        if bundled is not None:
+            if self._is_installed(argostranslate, lang_in, lang_out):
+                return
+            logger.info("Installing bundled argos model %s", bundled.name)
+            argostranslate.package.install_from_path(bundled)
+            return
+
+        # No bundle available (plain pip install): keep the previous online path.
         argostranslate.package.update_package_index()
         available_packages = argostranslate.package.get_available_packages()
         try:
@@ -937,6 +966,77 @@ class ArgosTranslator(BaseTranslator):
         translation = from_lang.get_translation(to_lang)
         translatedText = translation.translate(text)
         return translatedText
+
+
+class FirefoxTranslator(BaseTranslator):
+    """Local neural translation through `firefox-translations` (CTranslate2).
+
+    Runs entirely on the CPU with the models shipped in the offline bundle
+    (see :mod:`pdf2zh.offline_models`), so no network access is required.
+    """
+
+    name = "firefox"
+    envs = {
+        "FIREFOX_DEVICE": "cpu",
+        "FIREFOX_COMPUTE_TYPE": "int8",
+        "FIREFOX_INTER_THREADS": "1",
+        "FIREFOX_INTRA_THREADS": "0",
+        "FIREFOX_BEAM_SIZE": "1",
+    }
+    lang_map = {
+        "zh-cn": "zh",
+        "zh-hans": "zh",
+        "zh-hant": "zh",
+        "zh-tw": "zh",
+        "en-us": "en",
+        "en-gb": "en",
+    }
+
+    def __init__(
+        self, lang_in, lang_out, model, envs=None, ignore_cache=False, **kwargs
+    ):
+        self.set_envs(envs)
+        try:
+            from firefox_translations import Translator
+        except ImportError:
+            logger.warning(
+                "firefox-translations is not installed, if you want to use the "
+                "firefox translator, please install it. If you don't use the "
+                "firefox translator, you can safely ignore this warning."
+            )
+            raise
+        super().__init__(lang_in, lang_out, model, ignore_cache)
+        self.src_lang = self.lang_in.lower()
+        self.trg_lang = self.lang_out.lower()
+
+        model_dir = offline_models.ensure_firefox_model(self.src_lang, self.trg_lang)
+        logger.info("Loading firefox model from %s", model_dir)
+        self.translator = Translator(
+            src_lang=self.src_lang,
+            trg_lang=self.trg_lang,
+            model_dir=str(model_dir),
+            device=(self.envs.get("FIREFOX_DEVICE") or "cpu").strip(),
+            compute_type=(self.envs.get("FIREFOX_COMPUTE_TYPE") or "int8").strip(),
+            inter_threads=self._int_env("FIREFOX_INTER_THREADS", 1),
+            intra_threads=self._int_env("FIREFOX_INTRA_THREADS", 0),
+            beam_size=self._int_env("FIREFOX_BEAM_SIZE", 1),
+        )
+
+    def _int_env(self, key: str, default: int) -> int:
+        """Read an integer setting, tolerating empty or malformed values."""
+        try:
+            return int(self.envs.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def do_translate(self, text: str) -> str:
+        return self.translator.translate(text)
+
+    def __del__(self):
+        try:
+            self.translator.unload()
+        except Exception:
+            pass
 
 
 class GrokTranslator(OpenAITranslator):

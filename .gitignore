@@ -179,3 +179,9 @@ uv.lock
 *.pdf
 *.docx
 *.codebuddy
+
+# offline translation model bundle (generated, hundreds of MB)
+/offline-models/
+/offline-models.zip
+fetch_models.log
+fetch_models.err

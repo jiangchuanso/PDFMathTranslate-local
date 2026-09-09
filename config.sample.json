@@ -1,0 +1,51 @@
+{
+  "ENABLED_SERVICES": [
+    "Argos Translate",
+    "Firefox Translations",
+    "Ollama",
+    "Xinference",
+    "OpenAI-liked"
+  ],
+  "DEFAULT_SERVICES": [],
+  "translators": [
+    {
+      "name": "argos",
+      "envs": {}
+    },
+    {
+      "name": "firefox",
+      "envs": {
+        "FIREFOX_DEVICE": "cpu",
+        "FIREFOX_COMPUTE_TYPE": "int8",
+        "FIREFOX_INTER_THREADS": "1",
+        "FIREFOX_INTRA_THREADS": "0",
+        "FIREFOX_BEAM_SIZE": "1"
+      }
+    },
+    {
+      "name": "ollama",
+      "envs": {
+        "OLLAMA_HOST": "http://127.0.0.1:11434",
+        "OLLAMA_MODEL": "gemma2"
+      }
+    },
+    {
+      "name": "xinference",
+      "envs": {
+        "XINFERENCE_HOST": "http://127.0.0.1:9997",
+        "XINFERENCE_MODEL": "gemma-2-it"
+      }
+    },
+    {
+      "name": "openailiked",
+      "envs": {
+        "OPENAILIKED_BASE_URL": "http://127.0.0.1:8080/v1",
+        "OPENAILIKED_API_KEY": "sk-noauth",
+        "OPENAILIKED_MODEL": "llama-3.1",
+        "OPENAILIKED_STREAM": "false",
+        "OPENAILIKED_STOP_TOKENS": "",
+        "OPENAILIKED_MAX_TOKENS": "-1"
+      }
+    }
+  ]
+}
