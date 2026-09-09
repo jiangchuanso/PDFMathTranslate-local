@@ -499,6 +499,9 @@ def translate(
             s_raw,
             **locals(),
         )
+        # The output directory may not exist yet (e.g. a fresh -o path on the
+        # CLI); create it instead of crashing after the translation is done.
+        Path(output).mkdir(parents=True, exist_ok=True)
         file_mono = Path(output) / f"{filename}-mono.pdf"
         file_dual = Path(output) / f"{filename}-dual.pdf"
         doc_mono = open(file_mono, "wb")
