@@ -1,4 +1,5 @@
 import abc
+import contextlib
 import logging
 import os
 
@@ -112,6 +113,7 @@ class OnnxModel(DocLayoutModel):
         # serialized, so only cache the optimized graph for CPU-only.
         compiled_providers = {"CoreMLExecutionProvider", "TensorrtExecutionProvider"}
         can_cache = not compiled_providers.intersection(providers)
+        optimized_path = None
         if can_cache:
             optimized_path = model_path + ".optimized"
             if os.path.exists(optimized_path):
@@ -119,9 +121,26 @@ class OnnxModel(DocLayoutModel):
             else:
                 sess_options.optimized_model_filepath = optimized_path
 
-        self.model = onnxruntime.InferenceSession(
-            model_path, sess_options, providers=providers
-        )
+        try:
+            self.model = onnxruntime.InferenceSession(
+                model_path, sess_options, providers=providers
+            )
+        except Exception:
+            if optimized_path is None or model_path != optimized_path:
+                raise
+            # A cached optimized graph may be unusable on this machine, e.g. it
+            # was produced on x86 and relies on com.microsoft.nchwc ops. Drop it
+            # and fall back to the original model.
+            logger.warning("Discarding unusable optimized model: %s", model_path)
+            with contextlib.suppress(OSError):
+                os.remove(model_path)
+            fallback_options = onnxruntime.SessionOptions()
+            fallback_options.graph_optimization_level = (
+                onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+            )
+            self.model = onnxruntime.InferenceSession(
+                model_path[: -len(".optimized")], fallback_options, providers=providers
+            )
         logger.info("ONNX Runtime providers: %s", self.model.get_providers())
 
     @staticmethod

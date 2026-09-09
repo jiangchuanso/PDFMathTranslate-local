@@ -63,9 +63,7 @@ def _user_models_dir() -> Path:
     if os.name == "nt":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home()))
     else:
-        base = Path(
-            os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
-        )
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     return base / "pdf2zh" / MODELS_DIR_NAME
 
 

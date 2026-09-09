@@ -73,22 +73,23 @@ def download(url: str, destination: Path) -> bool:
         print(f"  skip (already present): {destination.name}")
         return True
     try:
-        with requests.get(
-            url, stream=True, timeout=60, headers=HEADERS
-        ) as response:
+        with requests.get(url, stream=True, timeout=60, headers=HEADERS) as response:
             if response.status_code != 200:
                 print(f"  unavailable [{response.status_code}]: {url}")
                 return False
             total = int(response.headers.get("content-length", 0))
             destination.parent.mkdir(parents=True, exist_ok=True)
             temporary = destination.with_suffix(destination.suffix + ".part")
-            with open(temporary, "wb") as handle, tqdm(
-                desc=destination.name,
-                total=total,
-                unit="iB",
-                unit_scale=True,
-                unit_divisor=1024,
-            ) as bar:
+            with (
+                open(temporary, "wb") as handle,
+                tqdm(
+                    desc=destination.name,
+                    total=total,
+                    unit="iB",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                ) as bar,
+            ):
                 for chunk in response.iter_content(chunk_size=1 << 20):
                     handle.write(chunk)
                     bar.update(len(chunk))
@@ -166,9 +167,7 @@ def main() -> int:
         default="offline-models",
         help="staging directory for the downloaded files",
     )
-    parser.add_argument(
-        "--out", default="offline-models.zip", help="output zip path"
-    )
+    parser.add_argument("--out", default="offline-models.zip", help="output zip path")
     parser.add_argument("--skip-firefox", action="store_true")
     parser.add_argument("--skip-argos", action="store_true")
     parser.add_argument("--no-zip", action="store_true", help="only download")

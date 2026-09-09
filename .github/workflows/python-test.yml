@@ -35,7 +35,10 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/babeldoc
-          key: test-1-babeldoc-assets-${{ hashFiles('babeldoctemp1234567/babeldoc/assets/embedding_assets_metadata.py') }}
+          # The cached ONNX models contain a graph optimized for the machine
+          # that produced it (x86 NCHWc ops cannot run on arm64), so the cache
+          # must never be shared across OS/arch.
+          key: test-1-babeldoc-assets-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('babeldoctemp1234567/babeldoc/assets/embedding_assets_metadata.py') }}
       - uses: actions/checkout@v6
       - name: Setup uv with Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
