@@ -2,7 +2,11 @@ import unittest
 from unittest.mock import Mock, patch, MagicMock
 from pdfminer.layout import LTPage, LTChar, LTLine
 from pdfminer.pdfinterp import PDFResourceManager
-from pdf2zh.converter import PDFConverterEx, TranslateConverter
+from pdf2zh.converter import (
+    PDFConverterEx,
+    TranslateConverter,
+    _collapse_repeated_punctuation,
+)
 
 
 class TestPDFConverterEx(unittest.TestCase):
@@ -104,6 +108,33 @@ class TestTranslateConverter(unittest.TestCase):
                 lang_out="zh",
                 service="InvalidService",
             )
+
+
+class TestRepeatedPunctuationCollapse(unittest.TestCase):
+    """Leader dots must not reach the translator, which repeats them forever."""
+
+    def test_leader_dots_keep_the_sentence_period(self):
+        text = "AUTOPILOT (if engaged). . . . . . . . . . . . . . . . . . . DISENGAGE "
+        self.assertEqual(
+            _collapse_repeated_punctuation(text),
+            "AUTOPILOT (if engaged).  DISENGAGE ",
+        )
+
+    def test_filler_only_paragraph_is_emptied(self):
+        self.assertEqual(
+            _collapse_repeated_punctuation(". . . . . . . . .").strip(), ""
+        )
+
+    def test_dash_leader(self):
+        self.assertEqual(_collapse_repeated_punctuation("Item - - - - - 3"), "Item   3")
+
+    def test_normal_punctuation_is_kept(self):
+        for text in (
+            "U.S.A. is a country.",
+            "See e.g. the figure.",
+            "737-100, -200, -300 series",
+        ):
+            self.assertEqual(_collapse_repeated_punctuation(text), text)
 
 
 if __name__ == "__main__":

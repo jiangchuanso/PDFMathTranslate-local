@@ -86,6 +86,7 @@ _ZH_TEXT = {
     "Custom Prompt for llm": "自定义 LLM 提示词",
     "Translation Mode": "翻译模式",
     "Enable BabelDOC experimental backend": "启用 BabelDOC 实验性后端",
+    "BabelDOC failed: ": "BabelDOC 翻译失败：",
     "fast": "快速（内置 v1 内核）",
     "precise": "精准（v2 内核，需额外安装）",
     "Translated": "翻译结果",
@@ -537,6 +538,7 @@ def babeldoc_translate_file(**kwargs):
     babeldoc_init()
     from babeldoc.high_level import async_translate as babeldoc_translate
     from babeldoc.translation_config import TranslationConfig as YadtConfig
+    from babeldoc.translation_config import WatermarkOutputMode
 
     for translator in [
         GoogleTranslator,
@@ -589,6 +591,28 @@ def babeldoc_translate_file(**kwargs):
     output_dir = Path(kwargs["output"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # BabelDOC's fast scanned check rejects every page that carries marked
+    # content (``/P <</MCID n>> BDC``, standard in tagged PDFs) or invisible
+    # text (``3 Tr``).  A perfectly readable text-layer PDF therefore gets
+    # mistaken for a scan and the job dies with "BabelDOC produced no output".
+    # The classic pdf2zh pipeline has no such gate, so the heuristic is off by
+    # default; set PDF2ZH_BABELDOC_DETECT_SCANNED=true to restore it.
+    detect_scanned = ConfigManager.get("PDF2ZH_BABELDOC_DETECT_SCANNED", False)
+    if isinstance(detect_scanned, str):
+        detect_scanned = detect_scanned.strip().lower() in {"1", "true", "yes", "on"}
+    skip_scanned_detection = not bool(detect_scanned)
+
+    # BabelDOC stamps a "translated by BabelDOC / yadt.io" line onto the first
+    # page by default, while the classic pdf2zh pipeline adds nothing at all.
+    # Keep both backends consistent: no watermark unless explicitly requested
+    # (PDF2ZH_BABELDOC_WATERMARK=true restores the upstream default).
+    watermark = ConfigManager.get("PDF2ZH_BABELDOC_WATERMARK", False)
+    if isinstance(watermark, str):
+        watermark = watermark.strip().lower() in {"1", "true", "yes", "on"}
+    watermark_output_mode = WatermarkOutputMode.NoWatermark
+    if watermark:
+        watermark_output_mode = WatermarkOutputMode.Watermarked
+
     for file in kwargs["files"]:
         file = file.strip("\"'")
         yadt_config = YadtConfig(
@@ -608,6 +632,8 @@ def babeldoc_translate_file(**kwargs):
             disable_rich_text_translate=not isinstance(translator, OpenAITranslator),
             formular_font_pattern=kwargs.get("vfont") or None,
             skip_clean=kwargs["skip_subset_fonts"],
+            skip_scanned_detection=skip_scanned_detection,
+            watermark_output_mode=watermark_output_mode,
             report_interval=0.5,
         )
 
@@ -629,6 +655,13 @@ def babeldoc_translate_file(**kwargs):
                     if kwargs["cancellation_event"].is_set():
                         yadt_config.cancel_translation()
                         raise CancelledError
+                    if event["type"] == "error":
+                        # BabelDOC reports failures through the progress channel
+                        # and then returns without a result; surface the real
+                        # reason instead of a bare "produced no output".
+                        raise gr.Error(
+                            _t("BabelDOC failed: ") + str(event.get("error"))
+                        )
                     if event["type"] == "finish":
                         result = event["translate_result"]
                         logger.info("Translation Result:")

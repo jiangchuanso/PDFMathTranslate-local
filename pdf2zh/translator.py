@@ -38,6 +38,48 @@ def remove_control_characters(s):
     return "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
 
 
+# CTranslate2 / OPUS-MT style models occasionally never emit ``</s>`` for very
+# short inputs (a lone word such as "Comments") and keep decoding the same
+# token until the length limit is reached, so the page fills up with
+# ``评论评论评论...``.  Collapse such loops instead of shipping them.
+_REPETITION_LOOP_RE = re.compile(r"(.{1,40}?)\1{4,}")
+_HAS_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+
+
+def _is_loop_run(match: "re.Match[str]") -> bool:
+    """Whether a regex match is a long enough loop of a meaningful unit."""
+    unit = match.group(1)
+    return len(match.group(0)) >= 10 and bool(_HAS_LETTER_RE.search(unit))
+
+
+def repair_repetition_loop(text: str) -> str:
+    """Collapse degenerate repetition loops in translated text.
+
+    Runs of at least five repeats (and at least ten characters) of a unit that
+    contains a letter are treated as a decoding loop.  When such a run covers
+    most of the string the whole translation *is* the loop, so only one copy of
+    the unit is kept; otherwise just the runs themselves are shortened.  Tables
+    of repeated digits and punctuation fillers never match.
+    """
+    if not text:
+        return text
+
+    runs = [
+        match for match in _REPETITION_LOOP_RE.finditer(text) if _is_loop_run(match)
+    ]
+    if not runs:
+        return text
+
+    longest = max(runs, key=lambda match: len(match.group(0)))
+    if len(longest.group(0)) * 4 >= len(text) * 3:
+        return longest.group(1)
+
+    return _REPETITION_LOOP_RE.sub(
+        lambda match: match.group(1) if _is_loop_run(match) else match.group(0),
+        text,
+    )
+
+
 class BaseTranslator:
     name = "base"
     envs = {}
@@ -88,18 +130,31 @@ class BaseTranslator:
         """
         self.cache.add_params(k, v)
 
-    def translate(self, text: str, ignore_cache: bool = False) -> str:
+    def translate(
+        self,
+        text: str,
+        ignore_cache: bool = False,
+        rate_limit_params: dict = None,
+    ) -> str:
         """
         Translate the text, and the other part should call this method.
         :param text: text to translate
         :return: translated text
         """
+        # ``rate_limit_params`` belongs to BabelDOC's translator interface, which
+        # hands the engine the paragraph token count.  pdf2zh has no rate limiter
+        # of its own, so the value is accepted and ignored - without the
+        # parameter the experimental BabelDOC backend fails on every paragraph
+        # (TypeError, swallowed by its per-paragraph ``except``) and produces an
+        # untranslated document.
         if not (self.ignore_cache or ignore_cache):
             cache = self.cache.get(text)
             if cache is not None:
-                return cache
+                # Entries written before the repetition-loop repair existed can
+                # still hold a loop, so sanitise them on the way out as well.
+                return repair_repetition_loop(cache)
 
-        translation = self.do_translate(text)
+        translation = repair_repetition_loop(self.do_translate(text))
         self.cache.set(text, translation)
         return translation
 
@@ -160,9 +215,14 @@ class BaseTranslator:
         return f"</b{id}>"
 
     def get_formular_placeholder(self, id: int):
-        return self.get_rich_text_left_placeholder(
-            id
-        ) + self.get_rich_text_right_placeholder(id)
+        """Placeholder BabelDOC substitutes for an inline formula.
+
+        The neural engines rewrite the tag style placeholder (``<b1></b1>``)
+        into ``<b1/b1>``, after which BabelDOC cannot match it any more and the
+        mangled tag shows up verbatim in the translated PDF.  ``{v1}`` is
+        pdf2zh's own formula marker and survives those engines untouched.
+        """
+        return "{v" + str(id) + "}"
 
 
 class GoogleTranslator(BaseTranslator):
@@ -1258,7 +1318,14 @@ class ArgosTranslator(BaseTranslator):
         download_path = available_package.download()
         argostranslate.package.install_from_path(download_path)
 
-    def translate(self, text: str, ignore_cache: bool = False):
+    def translate(
+        self,
+        text: str,
+        ignore_cache: bool = False,
+        rate_limit_params: dict = None,
+    ):
+        # ``rate_limit_params`` is accepted for BabelDOC compatibility and
+        # ignored, see BaseTranslator.translate.
         # Translate
         import argostranslate.translate  # noqa: F401
 
@@ -1273,7 +1340,7 @@ class ArgosTranslator(BaseTranslator):
         ]
         translation = from_lang.get_translation(to_lang)
         translatedText = translation.translate(text)
-        return translatedText
+        return repair_repetition_loop(translatedText)
 
 
 class FirefoxTranslator(BaseTranslator):

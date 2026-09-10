@@ -46,6 +46,31 @@ from pdf2zh.translator import (
 
 log = logging.getLogger(__name__)
 
+# Neural machine translation engines (Argos, Firefox/OPUS-MT, and even some
+# cloud APIs) degenerate on long runs of a single punctuation character: the
+# "leader dots" that forms and tables use to align text, for example
+# ``AUTOPILOT (if engaged). . . . . . . . . . . . . . . . . . . DISENGAGE``,
+# come back as one Chinese character repeated dozens of times.  Collapsing such
+# runs before handing the paragraph to the translator keeps those fillers from
+# poisoning the rest of the sentence.
+_REPEATED_PUNCT_RE = re.compile(r"([^\s\w]|_)(?:\s*\1){2,}")
+_WORD_RE = re.compile(r"\w", re.UNICODE)
+
+
+def _collapse_repeated_punctuation(s: str) -> str:
+    """Shorten runs of the same punctuation char (leader dots, dashes, ...)."""
+
+    def _sub(match: "re.Match[str]") -> str:
+        ch = match.group(1)
+        start = match.start()
+        # A period glued to the previous word is a sentence terminator, not a
+        # filler: keep it so that two sentences do not get merged together.
+        if ch == "." and start > 0 and not match.string[start - 1].isspace():
+            return ". "
+        return " "
+
+    return _REPEATED_PUNCT_RE.sub(_sub, s)
+
 
 class PDFConverterEx(PDFConverter):
     def __init__(
@@ -354,8 +379,12 @@ class TranslateConverter(PDFConverterEx):
         def worker(s: str):  # 多线程翻译
             if not s.strip() or re.match(r"^\{v\d+\}$", s):  # 空白和公式不翻译
                 return s
+            # 折叠点线等重复标点，避免翻译引擎把填充字符翻成一长串重复文字
+            text = _collapse_repeated_punctuation(s)
+            if not _WORD_RE.search(text):   # 只剩标点/数字，翻译没有意义
+                return s
             try:
-                new = self.translator.translate(s)
+                new = self.translator.translate(text)
                 return new
             except BaseException as e:
                 if log.isEnabledFor(logging.DEBUG):

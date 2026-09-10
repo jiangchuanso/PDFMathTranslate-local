@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import json
 import sys
 import tempfile
@@ -13,7 +14,13 @@ from ollama import ResponseError as OllamaResponseError
 from pdf2zh import cache
 from pdf2zh import translator as translator_module
 from pdf2zh.config import ConfigManager
-from pdf2zh.translator import BaseTranslator, OllamaTranslator, OpenAIlikedTranslator
+from pdf2zh.translator import (
+    ArgosTranslator,
+    BaseTranslator,
+    OllamaTranslator,
+    OpenAIlikedTranslator,
+    repair_repetition_loop,
+)
 
 # Since it is necessary to test whether the functionality meets the expected requirements,
 # private functions and private methods are allowed to be called.
@@ -378,6 +385,73 @@ class TestLegacyTokenizerCheckpoint(unittest.TestCase):
             ["space_before", "capitalized", "capitalized", "numeric"],
         )
         self.assertEqual(checkpoint["config"]["feat_dim"], 4)
+
+
+class TestBabelDOCTranslatorInterface(unittest.TestCase):
+    """The experimental BabelDOC backend drives engines through its own API."""
+
+    def setUp(self):
+        self.test_db = cache.init_test_db()
+
+    def tearDown(self):
+        cache.clean_test_db(self.test_db)
+
+    def test_translate_accepts_rate_limit_params(self):
+        class EchoTranslator(BaseTranslator):
+            name = "echo"
+            n = 0
+
+            def do_translate(self, text):
+                return f"[{text}]"
+
+        translator = EchoTranslator("en", "zh", "test", True)
+        # BabelDOC always passes the paragraph token count; a signature without
+        # it makes every paragraph fail and ships an untranslated document.
+        self.assertEqual(
+            translator.translate(
+                "hello", rate_limit_params={"paragraph_token_count": 3}
+            ),
+            "[hello]",
+        )
+
+    def test_argos_translate_accepts_rate_limit_params(self):
+        parameters = inspect.signature(ArgosTranslator.translate).parameters
+        self.assertIn("rate_limit_params", parameters)
+
+    def test_formula_placeholder_survives_neural_engines(self):
+        # "<b1></b1>" comes back as "<b1/b1>" from the local NMT engines and
+        # BabelDOC then leaves the mangled tag in the output PDF.
+        translator = AutoIncreaseTranslator("en", "zh", "test", True)
+        self.assertEqual(translator.get_formular_placeholder(2), "{v2}")
+
+
+class TestRepetitionLoopRepair(unittest.TestCase):
+    """Guards against NMT engines looping on very short inputs."""
+
+    def test_collapses_dominated_loop(self):
+        # Greedy decoding of the single word "Comments" with the Firefox/OPUS-MT
+        # model: 512 characters of the same unit plus a four character glitch.
+        loop = "评论" * 218 + "的评论的" + "评论" * 36
+        self.assertEqual(repair_repetition_loop(loop), "评论")
+
+    def test_collapses_run_inside_sentence(self):
+        sentence = "本文件更正了适用于所有波音737系列飞机的现有适航指令中的信息。"
+        self.assertEqual(
+            repair_repetition_loop(sentence + "问题" * 8), sentence + "问题"
+        )
+
+    def test_keeps_short_repeats_and_tables(self):
+        for text in (
+            "哈哈哈",
+            "评论 评论 评论",
+            "0 0 0 0 0 0 0 0",
+            "U.S.A. U.S.A.",
+        ):
+            self.assertEqual(repair_repetition_loop(text), text)
+
+    def test_keeps_normal_text(self):
+        text = "本文件更正了适用于所有波音737系列飞机的现有适航指令中的信息。"
+        self.assertEqual(repair_repetition_loop(text), text)
 
 
 if __name__ == "__main__":
