@@ -364,7 +364,9 @@ class TestLegacyTokenizerCheckpoint(unittest.TestCase):
 
     def test_removed_feature_functions_keep_the_vector_width(self):
         checkpoint = {
-            "config": {"feat_funcs": ["space_before", "capitalized", "all_caps", "numeric"]}
+            "config": {
+                "feat_funcs": ["space_before", "capitalized", "all_caps", "numeric"]
+            }
         }
 
         translator_module._repair_legacy_tokenizer_checkpoint(checkpoint, {})

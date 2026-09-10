@@ -254,7 +254,9 @@ else:
 def _available_modes() -> list[str]:
     from pdf2zh.kernel import KernelRegistry
 
-    modes = [name for name in ("fast", "precise") if name in set(KernelRegistry.available())]
+    modes = [
+        name for name in ("fast", "precise") if name in set(KernelRegistry.available())
+    ]
     return modes or ["fast"]
 
 
@@ -754,11 +756,7 @@ with gr.Blocks(
 
     with gr.Row():
         with gr.Column(scale=1):
-            gr.Markdown(
-                "## "
-                + _t("File")
-                + (" | < 5 MB" if flag_demo else "")
-            )
+            gr.Markdown("## " + _t("File") + (" | < 5 MB" if flag_demo else ""))
             file_type = gr.Radio(
                 choices=_labeled(["File", "Link"]),
                 label=_t("Type"),
