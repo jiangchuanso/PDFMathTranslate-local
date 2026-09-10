@@ -31,15 +31,38 @@ class KernelRegistry:
     @classmethod
     def switch(cls, name: str) -> None:
         with cls._lock:
-            kernel = cls._kernels[name]
+            try:
+                kernel = cls._kernels[name]
+            except KeyError:
+                raise RuntimeError(
+                    cls._unavailable_message(name, "is not a known mode")
+                ) from None
+
             if hasattr(kernel, "ensure_venv"):
-                kernel.ensure_venv()  # type: ignore[attr-defined]
+                try:
+                    kernel.ensure_venv()  # type: ignore[attr-defined]
+                except Exception as error:
+                    raise RuntimeError(
+                        cls._unavailable_message(name, str(error))
+                    ) from error
+
             if not kernel.is_available():
                 raise RuntimeError(
-                    f"Kernel '{name}' is not available. "
-                    "Check that the submodule is initialized and venv is set up."
+                    cls._unavailable_message(
+                        name,
+                        "the submodule is missing or its virtual environment "
+                        "is not set up",
+                    )
                 )
             cls._active = kernel
+
+    @classmethod
+    def _unavailable_message(cls, name: str, reason: str) -> str:
+        available = ", ".join(sorted(cls.available())) or "none"
+        return (
+            f"Translation mode '{name}' is not available: {reason}. "
+            f"Available modes: {available}."
+        )
 
     @classmethod
     def active_name(cls) -> str:

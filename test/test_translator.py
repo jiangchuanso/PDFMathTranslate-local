@@ -336,5 +336,47 @@ class TestOfflineStanzaManifest(unittest.TestCase):
             )
 
 
+class TestLegacyTokenizerCheckpoint(unittest.TestCase):
+    """argos bundles tokenizer checkpoints written by a much older stanza."""
+
+    def test_missing_entries_get_the_stanza_defaults(self):
+        checkpoint = {"config": {"feat_funcs": ["space_before", "capitalized"]}}
+
+        repaired = translator_module._repair_legacy_tokenizer_checkpoint(
+            checkpoint, {"feat_dropout": 0.05, "device": "cpu"}
+        )
+
+        self.assertEqual(repaired["config"]["feat_dropout"], 0.05)
+        self.assertEqual(repaired["config"]["device"], "cpu")
+        self.assertEqual(repaired["config"]["feat_dim"], 2)
+        # the trainer reads ``lexicon`` unconditionally, older dumps omit it
+        self.assertIsNone(repaired["lexicon"])
+
+    def test_entries_already_present_are_kept(self):
+        checkpoint = {"config": {"dropout": 0.5}, "lexicon": ["word"]}
+
+        repaired = translator_module._repair_legacy_tokenizer_checkpoint(
+            checkpoint, {"dropout": 0.9, "feat_dropout": 0.05}
+        )
+
+        self.assertEqual(repaired["config"]["dropout"], 0.5)
+        self.assertEqual(repaired["lexicon"], ["word"])
+
+    def test_removed_feature_functions_keep_the_vector_width(self):
+        checkpoint = {
+            "config": {"feat_funcs": ["space_before", "capitalized", "all_caps", "numeric"]}
+        }
+
+        translator_module._repair_legacy_tokenizer_checkpoint(checkpoint, {})
+
+        # "all_caps" was dropped from stanza; the entry has to stay so the
+        # feature vector keeps the width the trained model expects
+        self.assertEqual(
+            checkpoint["config"]["feat_funcs"],
+            ["space_before", "capitalized", "capitalized", "numeric"],
+        )
+        self.assertEqual(checkpoint["config"]["feat_dim"], 4)
+
+
 if __name__ == "__main__":
     unittest.main()

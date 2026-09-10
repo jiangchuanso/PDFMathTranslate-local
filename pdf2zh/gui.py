@@ -53,6 +53,87 @@ from babeldoc import __version__ as babeldoc_version
 logger = logging.getLogger(__name__)
 
 
+# The interface is used by Chinese speaking users on an intranet deployment, so
+# labels are translated by default.  English stays the lookup key, which means
+# setting ``PDF2ZH_GUI_LANG=en`` in the config (or the environment) restores the
+# original wording without touching this file.
+_GUI_LANGUAGE = str(ConfigManager.get("PDF2ZH_GUI_LANG", "zh") or "zh").strip().lower()
+
+_ZH_TEXT = {
+    "PDFMathTranslate - PDF Translation with preserved formats": (
+        "PDFMathTranslate - 保留排版的 PDF 翻译"
+    ),
+    "File": "文件",
+    "Link": "链接",
+    "Type": "输入方式",
+    "Option": "选项",
+    "Service": "翻译引擎",
+    "Translate from": "源语言",
+    "Translate to": "目标语言",
+    "Pages": "页码范围",
+    "All": "全部",
+    "First": "第一页",
+    "First 5 pages": "前 5 页",
+    "First 20 pages": "前 20 页",
+    "Others": "自定义",
+    "Page range": "页码范围（例：1-3,5）",
+    "Open for More Experimental Options!": "更多实验性选项",
+    "Experimental": "实验性功能",
+    "number of threads": "线程数",
+    "Skip font subsetting": "跳过字体子集化",
+    "Ignore cache": "忽略缓存",
+    "Custom formula font regex (vfont)": "自定义公式字体正则 (vfont)",
+    "Custom Prompt for llm": "自定义 LLM 提示词",
+    "Translation Mode": "翻译模式",
+    "Enable BabelDOC experimental backend": "启用 BabelDOC 实验性后端",
+    "fast": "快速（内置 v1 内核）",
+    "precise": "精准（v2 内核，需额外安装）",
+    "Translated": "翻译结果",
+    "Download Translation (Mono)": "下载译文（单语）",
+    "Download Translation (Dual)": "下载译文（双语对照）",
+    "Translate": "开始翻译",
+    "Cancel": "取消",
+    "Preview": "预览",
+    "Document Preview": "文档预览",
+    "Technical details": "技术信息",
+    "Simplified Chinese": "简体中文",
+    "Traditional Chinese": "繁体中文",
+    "English": "英语",
+    "French": "法语",
+    "German": "德语",
+    "Japanese": "日语",
+    "Korean": "韩语",
+    "Russian": "俄语",
+    "Spanish": "西班牙语",
+    "Italian": "意大利语",
+    "Argos Translate": "Argos 离线翻译",
+    "Firefox Translations": "Firefox 离线翻译",
+    "Ollama": "Ollama（本地模型）",
+    "Xinference": "Xinference（本地模型）",
+    "OpenAI-liked": "OpenAI 兼容接口（llama.cpp/vLLM 等）",
+    (
+        "Precise mode needs the separately installed v2 kernel and is "
+        "unavailable here."
+    ): "精准模式需要额外安装 v2 内核，当前不可用",
+    (
+        "Renders the layout more faithfully and merges paragraphs: "
+        "better quality, slower."
+    ): "版面还原更完整、会合并段落，译文质量更好但速度较慢",
+}
+
+
+def _t(text: str) -> str:
+    """Translate a label for the configured interface language."""
+    if _GUI_LANGUAGE.startswith("en"):
+        return text
+    return _ZH_TEXT.get(text, text)
+
+
+def _labeled(choices) -> list:
+    """Turn ``["Fast"]`` into Gradio ``[(label, value)]`` choice pairs."""
+    return [(_t(choice), choice) for choice in choices]
+
+
 class _LazyModel:
     """Defers model loading until first access so the GUI starts instantly."""
 
@@ -68,6 +149,10 @@ class _LazyModel:
             raise AttributeError(name)
         self._ensure_loaded()
         return getattr(self._model, name)
+
+    def __call__(self, *args, **kwargs):
+        self._ensure_loaded()
+        return self._model(*args, **kwargs)
 
 
 BABELDOC_MODEL = _LazyModel()
@@ -162,6 +247,20 @@ else:
     enabled_services = list(service_map.keys())
 
 
+# Translation kernels actually present on this machine.  "precise" needs the
+# pdf2zh_next submodule plus a virtual environment of its own, so it is only
+# offered when both exist - selecting an unprepared kernel used to raise
+# "submodule not found" in the middle of a translation.
+def _available_modes() -> list[str]:
+    from pdf2zh.kernel import KernelRegistry
+
+    modes = [name for name in ("fast", "precise") if name in set(KernelRegistry.available())]
+    return modes or ["fast"]
+
+
+available_modes = _available_modes()
+
+
 # Configure about Gradio show keys
 hidden_gradio_details: bool = bool(ConfigManager.get("HIDDEN_GRADIO_DETAILS"))
 
@@ -241,6 +340,7 @@ def translate_file(
     ignore_cache,
     vfont,
     mode_choice,
+    babeldoc_backend,
     recaptcha_response,
     state,
     progress=gr.Progress(),
@@ -260,6 +360,8 @@ def translate_file(
         - page_input: The input for the page range
         - prompt: The custom prompt for the llm
         - threads: The number of threads to use
+        - mode_choice: The selected translation kernel ("fast" or "precise")
+        - babeldoc_backend: Whether to translate with the BabelDOC backend
         - recaptcha_response: The reCAPTCHA response
         - state: The state of the translation process
         - progress: The progress bar
@@ -360,6 +462,29 @@ def translate_file(
     }
 
     try:
+        if babeldoc_backend:
+            # The experimental backend has its own pipeline, so it bypasses the
+            # kernel registry (which only routes the built-in v1 kernels).
+            babeldoc_result = babeldoc_translate_file(
+                files=[str(file_raw)],
+                output=str(output),
+                pages=selected_page,
+                lang_in=lang_from,
+                lang_out=lang_to,
+                service=f"{translator.name}",
+                thread=int(threads),
+                envs=_envs,
+                prompt=str(prompt) if prompt else None,
+                skip_subset_fonts=skip_subset_fonts,
+                ignore_cache=ignore_cache,
+                vfont=vfont,
+                callback=progress_bar,
+                cancellation_event=cancellation_event_map[session_id],
+            )
+            print(f"Files after translation: {os.listdir(output)}")
+            progress(1.0, desc="Translation complete!")
+            return babeldoc_result
+
         from pdf2zh.kernel import KernelRegistry
         from pdf2zh.kernel.protocol import TranslateRequest
 
@@ -452,13 +577,23 @@ def babeldoc_translate_file(**kwargs):
     import asyncio
     from babeldoc.main import create_progress_handler
 
+    # ``pages`` arrives as the 0-based page list the GUI selected, whereas
+    # babeldoc expects a 1-based range string such as "1-3,5".
+    selected_pages = kwargs.get("pages") or []
+    if isinstance(selected_pages, str):
+        pages = selected_pages
+    else:
+        pages = ",".join(str(int(page) + 1) for page in selected_pages)
+    output_dir = Path(kwargs["output"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     for file in kwargs["files"]:
         file = file.strip("\"'")
         yadt_config = YadtConfig(
             input_file=file,
             font=None,
-            pages=",".join((str(x) for x in getattr(kwargs, "raw_pages", []))),
-            output_dir=kwargs["output"],
+            pages=pages or None,
+            output_dir=str(output_dir),
             doc_layout_model=BABELDOC_MODEL,
             translator=translator,
             debug=False,
@@ -469,12 +604,15 @@ def babeldoc_translate_file(**kwargs):
             qps=kwargs["thread"],
             use_rich_pbar=False,
             disable_rich_text_translate=not isinstance(translator, OpenAITranslator),
+            formular_font_pattern=kwargs.get("vfont") or None,
             skip_clean=kwargs["skip_subset_fonts"],
             report_interval=0.5,
         )
 
         async def yadt_translate_coro(yadt_config):
             progress_context, progress_handler = create_progress_handler(yadt_config)
+            file_mono = None
+            file_dual = None
 
             # 开始翻译
             with progress_context:
@@ -482,7 +620,10 @@ def babeldoc_translate_file(**kwargs):
                     progress_handler(event)
                     if yadt_config.debug:
                         logger.debug(event)
-                    kwargs["callback"](progress_context)
+                    # with use_rich_pbar=False the progress context is a tqdm
+                    # bar, which is exactly what the Gradio callback expects
+                    if kwargs.get("callback"):
+                        kwargs["callback"](progress_context)
                     if kwargs["cancellation_event"].is_set():
                         yadt_config.cancel_translation()
                         raise CancelledError
@@ -499,6 +640,8 @@ def babeldoc_translate_file(**kwargs):
             import gc
 
             gc.collect()
+            if not file_mono or not file_dual:
+                raise gr.Error("BabelDOC produced no output")
             return (
                 str(file_mono),
                 str(file_mono),
@@ -582,7 +725,7 @@ demo_recaptcha = """
     """
 
 tech_details_string = f"""
-                    <summary>Technical details</summary>
+                    <summary>{_t("Technical details")}</summary>
                     - GitHub: <a href="https://github.com/Byaidu/PDFMathTranslate">Byaidu/PDFMathTranslate</a><br>
                     - BabelDOC: <a href="https://github.com/funstory-ai/BabelDOC">funstory-ai/BabelDOC</a><br>
                     - GUI by: <a href="https://github.com/reycn">Rongxin</a><br>
@@ -594,7 +737,7 @@ cancellation_event_map = {}
 
 # The following code creates the GUI
 with gr.Blocks(
-    title="PDFMathTranslate - PDF Translation with preserved formats",
+    title=_t("PDFMathTranslate - PDF Translation with preserved formats"),
     theme=gr.themes.Default(
         primary_hue=custom_blue,
         spacing_size="md",
@@ -611,28 +754,32 @@ with gr.Blocks(
 
     with gr.Row():
         with gr.Column(scale=1):
-            gr.Markdown("## File | < 5 MB" if flag_demo else "## File")
+            gr.Markdown(
+                "## "
+                + _t("File")
+                + (" | < 5 MB" if flag_demo else "")
+            )
             file_type = gr.Radio(
-                choices=["File", "Link"],
-                label="Type",
+                choices=_labeled(["File", "Link"]),
+                label=_t("Type"),
                 value="File",
             )
             file_input = gr.File(
-                label="File",
+                label=_t("File"),
                 file_count="single",
                 file_types=[".pdf", ".doc", ".docx"],
                 type="filepath",
                 elem_classes=["input-file"],
             )
             link_input = gr.Textbox(
-                label="Link",
+                label=_t("Link"),
                 visible=False,
                 interactive=True,
             )
-            gr.Markdown("## Option")
+            gr.Markdown("## " + _t("Option"))
             service = gr.Dropdown(
-                label="Service",
-                choices=enabled_services,
+                label=_t("Service"),
+                choices=_labeled(enabled_services),
                 value=enabled_services[0],
             )
             # Each engine declares its own env entries and the count differs
@@ -654,51 +801,68 @@ with gr.Blocks(
                 )
             with gr.Row():
                 lang_from = gr.Dropdown(
-                    label="Translate from",
-                    choices=lang_map.keys(),
+                    label=_t("Translate from"),
+                    choices=_labeled(lang_map.keys()),
                     value=ConfigManager.get("PDF2ZH_LANG_FROM", "English"),
                 )
                 lang_to = gr.Dropdown(
-                    label="Translate to",
-                    choices=lang_map.keys(),
+                    label=_t("Translate to"),
+                    choices=_labeled(lang_map.keys()),
                     value=ConfigManager.get("PDF2ZH_LANG_TO", "Simplified Chinese"),
                 )
             page_range = gr.Radio(
-                choices=page_map.keys(),
-                label="Pages",
+                choices=_labeled(page_map.keys()),
+                label=_t("Pages"),
                 value=list(page_map.keys())[0],
             )
 
             page_input = gr.Textbox(
-                label="Page range",
+                label=_t("Page range"),
                 visible=False,
                 interactive=True,
             )
 
-            with gr.Accordion("Open for More Experimental Options!", open=False):
-                gr.Markdown("#### Experimental")
+            with gr.Accordion(_t("Open for More Experimental Options!"), open=False):
+                gr.Markdown("#### " + _t("Experimental"))
                 threads = gr.Textbox(
-                    label="number of threads", interactive=True, value="4"
+                    label=_t("number of threads"), interactive=True, value="4"
                 )
                 skip_subset_fonts = gr.Checkbox(
-                    label="Skip font subsetting", interactive=True, value=False
+                    label=_t("Skip font subsetting"), interactive=True, value=False
                 )
                 ignore_cache = gr.Checkbox(
-                    label="Ignore cache", interactive=True, value=False
+                    label=_t("Ignore cache"), interactive=True, value=False
                 )
                 vfont = gr.Textbox(
-                    label="Custom formula font regex (vfont)",
+                    label=_t("Custom formula font regex (vfont)"),
                     interactive=True,
                     value=ConfigManager.get("PDF2ZH_VFONT", ""),
                 )
                 prompt = gr.Textbox(
-                    label="Custom Prompt for llm", interactive=True, visible=False
+                    label=_t("Custom Prompt for llm"), interactive=True, visible=False
                 )
                 mode_choice = gr.Dropdown(
-                    label="Translation Mode",
-                    choices=["fast", "precise"],
-                    value="fast",
+                    label=_t("Translation Mode"),
+                    choices=[(_t(mode), mode) for mode in available_modes],
+                    value=available_modes[0],
                     interactive=True,
+                    info=(
+                        ""
+                        if "precise" in available_modes
+                        else _t(
+                            "Precise mode needs the separately installed v2 "
+                            "kernel and is unavailable here."
+                        )
+                    ),
+                )
+                babeldoc_backend = gr.Checkbox(
+                    label=_t("Enable BabelDOC experimental backend"),
+                    interactive=True,
+                    value=False,
+                    info=_t(
+                        "Renders the layout more faithfully and merges "
+                        "paragraphs: better quality, slower."
+                    ),
                 )
                 envs.append(prompt)
 
@@ -746,19 +910,19 @@ with gr.Blocks(
                 ConfigManager.set("PDF2ZH_VFONT", value)
                 return value
 
-            output_title = gr.Markdown("## Translated", visible=False)
+            output_title = gr.Markdown("## " + _t("Translated"), visible=False)
             output_file_mono = gr.File(
-                label="Download Translation (Mono)", visible=False
+                label=_t("Download Translation (Mono)"), visible=False
             )
             output_file_dual = gr.File(
-                label="Download Translation (Dual)", visible=False
+                label=_t("Download Translation (Dual)"), visible=False
             )
             recaptcha_response = gr.Textbox(
                 label="reCAPTCHA Response", elem_id="verify", visible=False
             )
             recaptcha_box = gr.HTML('<div id="recaptcha-box"></div>')
-            translate_btn = gr.Button("Translate", variant="primary")
-            cancellation_btn = gr.Button("Cancel", variant="secondary")
+            translate_btn = gr.Button(_t("Translate"), variant="primary")
+            cancellation_btn = gr.Button(_t("Cancel"), variant="secondary")
             tech_details_tog = gr.Markdown(
                 tech_details_string,
                 elem_classes=["secondary-text"],
@@ -792,8 +956,8 @@ with gr.Blocks(
             )
 
         with gr.Column(scale=2):
-            gr.Markdown("## Preview")
-            preview = PDF(label="Document Preview", visible=True, height=2000)
+            gr.Markdown("## " + _t("Preview"))
+            preview = PDF(label=_t("Document Preview"), visible=True, height=2000)
 
     # Event handlers
     file_input.upload(
@@ -836,6 +1000,7 @@ with gr.Blocks(
             ignore_cache,
             vfont,
             mode_choice,
+            babeldoc_backend,
             recaptcha_response,
             state,
             *envs,

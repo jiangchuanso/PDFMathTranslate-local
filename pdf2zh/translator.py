@@ -7,7 +7,7 @@ import re
 import unicodedata
 from copy import copy
 from string import Template
-from typing import Optional, Tuple, cast
+from typing import Any, Dict, Optional, Tuple, cast
 import deepl
 import ollama
 import openai
@@ -992,6 +992,15 @@ def _prepare_offline_stanza_dir(sentencizer) -> Optional[Tuple[str, str, str]]:
         }
     }
     resources_file = os.path.join(stanza_dir, "resources.json")
+    try:
+        with open(resources_file, "r", encoding="utf-8") as handle:
+            if json.load(handle) == manifest:
+                # Already advertising exactly this tokenizer, so skip the
+                # rewrite - it also sidesteps a transient sharing violation
+                # (WinError 32) on the very file we would replace.
+                return stanza_dir, lang, model
+    except (OSError, ValueError):
+        pass
     temporary = f"{resources_file}.tmp-{os.getpid()}"
     try:
         with open(temporary, "w", encoding="utf-8") as handle:
@@ -1001,6 +1010,103 @@ def _prepare_offline_stanza_dir(sentencizer) -> Optional[Tuple[str, str, str]]:
         logger.warning("Could not write the offline stanza manifest: %s", error)
         return None
     return stanza_dir, lang, model
+
+
+#: Feature functions implemented by the stanza releases that carry
+#: ``stanza.models.tokenization``.  Checkpoints written by older releases may
+#: name functions that have been dropped since.
+_STANZA_FEATURE_FUNCTIONS = frozenset(
+    {"space_before", "capitalized", "numeric", "end_of_para", "start_of_para"}
+)
+#: Feature name substituted for one the installed stanza no longer implements.
+#: The model's first layer is sized for the exact number of features it was
+#: trained with, so the entry must stay - only its name may change.
+_STANZA_FEATURE_FALLBACK = "capitalized"
+#: Feature functions assumed when a checkpoint lists none.
+_STANZA_DEFAULT_FEATURES = ("space_before", "capitalized", "numeric")
+
+
+def _stanza_tokenizer_arg_defaults() -> Dict[str, Any]:
+    """Defaults of the tokenizer arguments the running stanza defines.
+
+    Returns an empty mapping when stanza is too old (or too new) to expose
+    them, in which case only the entries handled explicitly are repaired.
+    """
+    try:
+        from stanza.models.tokenizer import build_argparse
+    except Exception as error:  # pragma: no cover - depends on stanza internals
+        logger.debug("cannot read stanza tokenizer defaults: %s", error)
+        return {}
+    try:
+        return dict(vars(build_argparse().parse_args([])))
+    except Exception as error:  # pragma: no cover - depends on stanza internals
+        logger.debug("cannot parse stanza tokenizer defaults: %s", error)
+        return {}
+
+
+def _repair_legacy_tokenizer_checkpoint(checkpoint, defaults):
+    """Make a tokenizer checkpoint bundled in an old ``.argosmodel`` loadable.
+
+    Those checkpoints were written by a much older stanza: their ``config``
+    misses arguments the current release reads unconditionally (``feat_dropout``
+    and friends), the ``lexicon`` entry is gone, and some feature functions have
+    been removed since.  Every gap has a harmless repair - dropout layers are
+    no-ops while evaluating, a missing lexicon only disables the dictionary
+    features, and an unknown feature name can be redirected to the closest
+    survivor while keeping the feature vector width the model expects.
+    """
+    if not isinstance(checkpoint, dict):
+        return checkpoint
+    checkpoint.setdefault("lexicon", None)
+
+    config = checkpoint.get("config")
+    if not isinstance(config, dict):
+        return checkpoint
+
+    for key, value in defaults.items():
+        config.setdefault(key, value)
+
+    features = config.get("feat_funcs") or list(_STANZA_DEFAULT_FEATURES)
+    config["feat_funcs"] = [
+        name if name in _STANZA_FEATURE_FUNCTIONS else _STANZA_FEATURE_FALLBACK
+        for name in features
+    ]
+    config.setdefault("feat_dim", len(config["feat_funcs"]))
+    return checkpoint
+
+
+def _ensure_legacy_stanza_tokenizers_load() -> None:
+    """Let stanza's tokenizer trainer accept the checkpoints argos bundles.
+
+    ``Trainer.load`` hands the freshly unpickled checkpoint straight to the
+    model, so the repair is hooked onto the ``torch.load`` call that module
+    performs.  Only that module's view of ``torch`` is redirected, which keeps
+    the patch scoped to tokenizer loading.
+    """
+    try:
+        from stanza.models.tokenization import trainer as tokenizer_trainer
+    except Exception as error:
+        logger.debug("stanza tokenizer compatibility patch skipped: %s", error)
+        return
+    if getattr(tokenizer_trainer, "_pdf2zh_tokenizer_compat", False):
+        return
+
+    module = tokenizer_trainer.torch
+    defaults = _stanza_tokenizer_arg_defaults()
+
+    class _CompatibleTorch:
+        """``torch`` proxy repairing tokenizer checkpoints while they load."""
+
+        def __getattr__(self, name):
+            return getattr(module, name)
+
+        def load(self, *args, **kwargs):
+            return _repair_legacy_tokenizer_checkpoint(
+                module.load(*args, **kwargs), defaults
+            )
+
+    tokenizer_trainer.torch = _CompatibleTorch()
+    tokenizer_trainer._pdf2zh_tokenizer_compat = True
 
 
 def _build_offline_stanza_pipeline(sentencizer):
@@ -1018,6 +1124,8 @@ def _build_offline_stanza_pipeline(sentencizer):
     if prepared is None:
         return None
     stanza_dir, lang, package = prepared
+    # the bundled checkpoints predate the installed stanza, see the helper
+    _ensure_legacy_stanza_tokenizers_load()
 
     kwargs = {
         "lang": lang,
@@ -1042,9 +1150,11 @@ def _build_offline_stanza_pipeline(sentencizer):
         pipeline = stanza.Pipeline(**kwargs)
     except Exception as error:
         logger.warning(
-            "stanza sentence splitter is not usable (%s); falling back to "
+            "stanza sentence splitter is not usable (%s: %s); falling back to "
             "local sentence splitting",
+            type(error).__name__,
             error,
+            exc_info=logger.isEnabledFor(logging.DEBUG),
         )
         return None
     logger.info(

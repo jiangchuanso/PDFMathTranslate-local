@@ -16,6 +16,7 @@
 - [Translation cache](#cache)
 - [Offline models (local engines)](#offline-models)
 - [Limit available services](#limit-services)
+- [Web UI language and BabelDOC backend](#gui-language)
 
 ---
 
@@ -487,3 +488,36 @@ under the `translators` array and they become selectable:
 
 > Note: `ENABLED_SERVICES` governs the **web UI**. The CLI (`pdf2zh -s <service>`)
 > selects the engine directly and is not filtered by this list.
+
+---
+
+<h3 id="gui-language">Web UI language and BabelDOC backend</h3>
+
+The Gradio web UI (`pdf2zh -i`) ships bilingual labels: Chinese by default,
+English when `PDF2ZH_GUI_LANG=en` is set.
+
+```json
+{
+  "PDF2ZH_GUI_LANG": "zh"
+}
+```
+
+The *Experimental* accordion of the UI contains two extra switches:
+
+- **Translation Mode** - `fast` (the built-in v1 kernel) or `precise` (the
+  separate `pdf2zh_next` v2 kernel). `precise` is only offered when that kernel
+  and its virtual environment are installed; otherwise the choice is hidden and
+  the CLI explains why instead of failing in the middle of a translation:
+
+  ```bash
+  git submodule update --init pdf2zh/kernel/PDFMathTranslate-next.git
+  python -m pdf2zh.kernel.precise      # provisions the v2 virtual environment
+  ```
+
+- **Enable BabelDOC experimental backend** - runs the job through the BabelDOC
+  pipeline (the same backend as `pdf2zh --babeldoc`) instead of the built-in
+  kernel. It merges paragraphs and restores the layout more faithfully, at the
+  cost of speed. Note that the local `argos`/`firefox` models are small NMT
+  models - for a clearly better translation, pair the BabelDOC backend with a
+  self-hosted LLM engine (`Ollama`, `Xinference`, or `OpenAI-liked` pointing at
+  llama.cpp/vLLM).
