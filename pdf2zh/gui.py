@@ -635,8 +635,17 @@ with gr.Blocks(
                 choices=enabled_services,
                 value=enabled_services[0],
             )
+            # Each engine declares its own env entries and the count differs
+            # (OpenAI-liked/OpenAI use six, Firefox five, Google/Bing none), so
+            # the number of boxes must follow the registry.  The last component
+            # of ``envs`` is always the custom prompt.
+            env_slots = max(
+                (len(getattr(t, "envs", {}) or {}) for t in service_map.values()),
+                default=0,
+            )
+            env_slots = max(3, env_slots)
             envs = []
-            for i in range(3):
+            for i in range(env_slots):
                 envs.append(
                     gr.Textbox(
                         visible=False,
@@ -695,9 +704,8 @@ with gr.Blocks(
 
             def on_select_service(service, evt: gr.EventData):
                 translator = service_map[service]
-                _envs = []
-                for i in range(4):
-                    _envs.append(gr.update(visible=False, value=""))
+                # one hidden update per component, prompt slot included
+                _envs = [gr.update(visible=False, value="") for _ in range(len(envs))]
                 for i, env in enumerate(translator.envs.items()):
                     label = env[0]
                     value = ConfigManager.get_env_by_translatername(

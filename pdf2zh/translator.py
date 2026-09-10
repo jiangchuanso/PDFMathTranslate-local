@@ -1,3 +1,4 @@
+import hashlib
 import html
 import json
 import logging
@@ -6,7 +7,7 @@ import re
 import unicodedata
 from copy import copy
 from string import Template
-from typing import cast
+from typing import Optional, Tuple, cast
 import deepl
 import ollama
 import openai
@@ -888,6 +889,202 @@ class DifyTranslator(BaseTranslator):
         return response_data.get("answer", "")
 
 
+#: Sentence terminators used by the offline fallback splitter.  Latin
+#: terminators additionally require a following space so that decimals such as
+#: "2.5" are not torn apart.
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[。！？…])")
+
+
+class _LocalSentence:
+    def __init__(self, text: str):
+        self.text = text
+
+
+class _LocalSentenceDoc:
+    def __init__(self, sentences: list[str]):
+        self.sentences = [_LocalSentence(s) for s in sentences]
+
+
+class _LocalSentenceSplitter:
+    """Minimal stand-in for ``stanza.Pipeline`` used without stanza models.
+
+    argostranslate only reads ``doc.sentences[i].text`` from the pipeline, so a
+    punctuation based splitter is enough to keep translating offline.
+    """
+
+    def __call__(self, text: str) -> _LocalSentenceDoc:
+        parts = [part.strip() for part in _SENTENCE_BOUNDARY.split(text)]
+        return _LocalSentenceDoc([part for part in parts if part])
+
+
+def _md5(path: str) -> str:
+    digest = hashlib.md5()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stanza_language_dir(stanza_dir: str, lang_code: str) -> Optional[str]:
+    """Find the language folder bundled in an argos ``stanza`` directory."""
+    try:
+        available = sorted(
+            entry.name for entry in os.scandir(stanza_dir) if entry.is_dir()
+        )
+    except OSError:
+        return None
+    if lang_code in available:
+        return lang_code
+    # stanza spells a few languages differently from argos ("zh" -> "zh-hans")
+    candidates = [name for name in available if name.startswith(lang_code)]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _prepare_offline_stanza_dir(sentencizer) -> Optional[Tuple[str, str, str]]:
+    """Return ``(dir, lang, package)`` of a stanza tokenizer usable offline.
+
+    ``.argosmodel`` archives ship the stanza tokenizer weights next to a trimmed
+    ``resources.json``.  Newer stanza releases pick the package to load from the
+    ``packages`` (or ``default_processors``) section of that manifest, which
+    refers to weights the archive does not contain, so the pipeline tries to
+    download them - impossible on an isolated network.  The weights that really
+    are on disk describe themselves well enough, so the manifest is rewritten to
+    advertise exactly the bundled tokenizer.
+
+    ``mwt`` is left out on purpose: argos only reads ``doc.sentences``, so the
+    multi-word-token weights would be dead weight.
+    """
+    package = getattr(sentencizer, "pkg", None)
+    package_path = getattr(package, "package_path", None)
+    if package_path is None:
+        return None
+    stanza_dir = os.path.join(str(package_path), "stanza")
+
+    lang_code = (
+        getattr(sentencizer, "stanza_lang_code", None)
+        or getattr(package, "from_code", None)
+        or "en"
+    )
+    lang = _stanza_language_dir(stanza_dir, lang_code)
+    if lang is None:
+        return None
+
+    tokenize_dir = os.path.join(stanza_dir, lang, "tokenize")
+    try:
+        models = sorted(
+            name[: -len(".pt")]
+            for name in os.listdir(tokenize_dir)
+            if name.endswith(".pt")
+        )
+    except OSError:
+        return None
+    if not models:
+        return None
+
+    model = models[0]
+    manifest = {
+        lang: {
+            "lang_name": lang,
+            "tokenize": {
+                model: {"md5": _md5(os.path.join(tokenize_dir, model + ".pt"))}
+            },
+            "packages": {},
+        }
+    }
+    resources_file = os.path.join(stanza_dir, "resources.json")
+    temporary = f"{resources_file}.tmp-{os.getpid()}"
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        os.replace(temporary, resources_file)
+    except OSError as error:
+        logger.warning("Could not write the offline stanza manifest: %s", error)
+        return None
+    return stanza_dir, lang, model
+
+
+def _build_offline_stanza_pipeline(sentencizer):
+    """Build a stanza pipeline from the models bundled in an argos package.
+
+    Returns ``None`` when stanza is missing or refuses to load those resources,
+    in which case the caller falls back to local sentence splitting.
+    """
+    try:
+        import stanza
+    except ImportError:
+        return None
+
+    prepared = _prepare_offline_stanza_dir(sentencizer)
+    if prepared is None:
+        return None
+    stanza_dir, lang, package = prepared
+
+    kwargs = {
+        "lang": lang,
+        "dir": stanza_dir,
+        # the manifest only advertises the bundled weights, so ask for them by
+        # name instead of letting stanza resolve "default" to something absent
+        "package": package,
+        "processors": "tokenize",
+        "use_gpu": False,
+        "logging_level": "WARNING",
+    }
+    # stanza refreshes "resources_<version>.json" over HTTP unless told
+    # otherwise, which is the request that fails on an isolated network.
+    download_method = getattr(stanza, "DownloadMethod", None)
+    for method in ("NONE", "REUSE_RESOURCES"):
+        value = getattr(download_method, method, None)
+        if value is not None:
+            kwargs["download_method"] = value
+            break
+
+    try:
+        pipeline = stanza.Pipeline(**kwargs)
+    except Exception as error:
+        logger.warning(
+            "stanza sentence splitter is not usable (%s); falling back to "
+            "local sentence splitting",
+            error,
+        )
+        return None
+    logger.info(
+        "Using stanza sentence splitter (%s/%s) from %s", lang, package, stanza_dir
+    )
+    return pipeline
+
+
+def _patch_argos_sentence_splitter() -> None:
+    """Keep argostranslate's sentence splitter away from the network.
+
+    Newer argostranslate releases build their stanza pipeline lazily and let
+    stanza fetch ``resources_<version>.json`` from raw.githubusercontent.com even
+    though the models shipped inside the ``.argosmodel`` package are already on
+    disk.  On an air-gapped deployment that request fails for every paragraph,
+    so translation never finishes.  The lazy loader is replaced by one that only
+    uses the packaged models and degrades to punctuation splitting when even
+    those are unavailable.
+    """
+    try:
+        from argostranslate import sbd
+    except Exception as error:  # argostranslate is optional
+        logger.debug("argostranslate sentence splitter not patched: %s", error)
+        return
+
+    sentencizer = getattr(sbd, "StanzaSentencizer", None)
+    if sentencizer is None or getattr(sentencizer, "_pdf2zh_offline", False):
+        return
+
+    def lazy_pipeline(self):
+        pipeline = getattr(self, "_pdf2zh_offline_pipeline", None)
+        if pipeline is None:
+            pipeline = _build_offline_stanza_pipeline(self) or _LocalSentenceSplitter()
+            self._pdf2zh_offline_pipeline = pipeline
+        return pipeline
+
+    sentencizer.lazy_pipeline = lazy_pipeline
+    sentencizer._pdf2zh_offline = True
+
+
 class ArgosTranslator(BaseTranslator):
     name = "argos"
 
@@ -900,6 +1097,7 @@ class ArgosTranslator(BaseTranslator):
                 "argos-translate is not installed, if you want to use argostranslate, please install it. If you don't use argostranslate translator, you can safely ignore this warning."
             )
             raise
+        _patch_argos_sentence_splitter()
         super().__init__(lang_in, lang_out, model, ignore_cache)
         lang_in = self.lang_map.get(lang_in.lower(), lang_in)
         lang_out = self.lang_map.get(lang_out.lower(), lang_out)

@@ -13,7 +13,7 @@ from pdfminer.pdffont import PDFCIDFont, PDFUnicodeNotDefined
 from pdfminer.pdfinterp import PDFGraphicState, PDFResourceManager
 from pdfminer.utils import apply_matrix_pt, mult_matrix
 from pymupdf import Font
-from tenacity import retry, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pdf2zh.translator import (
     AnythingLLMTranslator,
@@ -346,7 +346,11 @@ class TranslateConverter(PDFConverterEx):
         # B. 段落翻译
         log.debug("\n==========[SSTACK]==========\n")
 
-        @retry(wait=wait_fixed(1))
+        # The retry must be bounded: a translation that can never succeed (e.g.
+        # an engine whose model cannot be loaded offline) has to surface as an
+        # error instead of being retried forever, which would leave the job
+        # stuck at whatever progress it had already reached.
+        @retry(wait=wait_fixed(1), stop=stop_after_attempt(3), reraise=True)
         def worker(s: str):  # 多线程翻译
             if not s.strip() or re.match(r"^\{v\d+\}$", s):  # 空白和公式不翻译
                 return s

@@ -1,10 +1,17 @@
+import hashlib
+import json
+import sys
+import tempfile
+import types
 import unittest
+from pathlib import Path
 from textwrap import dedent
 from unittest import mock
 
 from ollama import ResponseError as OllamaResponseError
 
 from pdf2zh import cache
+from pdf2zh import translator as translator_module
 from pdf2zh.config import ConfigManager
 from pdf2zh.translator import BaseTranslator, OllamaTranslator, OpenAIlikedTranslator
 
@@ -218,6 +225,115 @@ class TestOllamaTranslator(unittest.TestCase):
         self.assertEqual(
             excepted_not_retain_cot_content, only_removed_cot_content.strip()
         )
+
+
+class TestArgosSentenceSplitter(unittest.TestCase):
+    """The argos sentence splitter must stay usable without network access."""
+
+    @staticmethod
+    def _fake_argostranslate():
+        module = types.ModuleType("argostranslate")
+        sbd = types.ModuleType("argostranslate.sbd")
+
+        class StanzaSentencizer:
+            def lazy_pipeline(self):
+                raise AssertionError("stanza must not be queried")
+
+        sbd.StanzaSentencizer = StanzaSentencizer
+        module.sbd = sbd
+        return module, sbd, StanzaSentencizer
+
+    def test_patch_uses_local_splitter_without_stanza(self):
+        module, sbd, sentencizer = self._fake_argostranslate()
+        with (
+            mock.patch.dict(
+                sys.modules, {"argostranslate": module, "argostranslate.sbd": sbd}
+            ),
+            mock.patch.object(
+                translator_module, "_build_offline_stanza_pipeline", return_value=None
+            ),
+        ):
+            translator_module._patch_argos_sentence_splitter()
+
+        instance = sentencizer()
+        splitter = instance.lazy_pipeline()
+        self.assertIsInstance(splitter, translator_module._LocalSentenceSplitter)
+        # the pipeline is built once and cached per splitter afterwards
+        self.assertIs(splitter, instance.lazy_pipeline())
+        document = splitter("Hello world. Is it 2.5? 中文句子。第二句！")
+        self.assertEqual(
+            [sentence.text for sentence in document.sentences],
+            ["Hello world.", "Is it 2.5?", "中文句子。", "第二句！"],
+        )
+
+    def test_pipeline_builder_degrades_without_stanza(self):
+        with mock.patch.dict(sys.modules, {"stanza": None}):
+            self.assertIsNone(
+                translator_module._build_offline_stanza_pipeline(mock.Mock())
+            )
+
+
+class TestOfflineStanzaManifest(unittest.TestCase):
+    """The stanza manifest must describe the models an argos package ships."""
+
+    @staticmethod
+    def _fake_sentencizer(package_path, stanza_lang_code):
+        sentencizer = mock.Mock()
+        sentencizer.pkg.package_path = package_path
+        sentencizer.stanza_lang_code = stanza_lang_code
+        return sentencizer
+
+    @staticmethod
+    def _bundle_tokenizer(root, lang_dir, model):
+        tokenize_dir = Path(root, "stanza", lang_dir, "tokenize")
+        tokenize_dir.mkdir(parents=True)
+        weights = tokenize_dir / f"{model}.pt"
+        weights.write_bytes(b"weights")
+        return weights
+
+    def test_manifest_advertises_the_bundled_tokenizer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._bundle_tokenizer(tmp, "en", "ewt")
+            sentencizer = self._fake_sentencizer(Path(tmp), "en")
+
+            stanza_dir, lang, package = translator_module._prepare_offline_stanza_dir(
+                sentencizer
+            )
+
+            self.assertEqual(Path(stanza_dir), Path(tmp, "stanza"))
+            self.assertEqual((lang, package), ("en", "ewt"))
+
+            manifest = json.loads(
+                Path(stanza_dir, "resources.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(list(manifest), ["en"])
+            self.assertEqual(
+                manifest["en"]["tokenize"]["ewt"]["md5"],
+                hashlib.md5(b"weights").hexdigest(),
+            )
+            # no mwt entry: argos only needs sentences and the bundle has no
+            # multi-word-token weights to offer
+            self.assertNotIn("mwt", manifest["en"])
+
+    def test_argos_language_code_is_mapped_to_the_stanza_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._bundle_tokenizer(tmp, "zh-hans", "gsdsimp")
+            sentencizer = self._fake_sentencizer(Path(tmp), "zh")
+
+            _, lang, package = translator_module._prepare_offline_stanza_dir(
+                sentencizer
+            )
+
+            self.assertEqual((lang, package), ("zh-hans", "gsdsimp"))
+
+    def test_missing_weights_are_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "stanza", "en").mkdir(parents=True)
+            sentencizer = self._fake_sentencizer(Path(tmp), "en")
+
+            self.assertIsNone(
+                translator_module._prepare_offline_stanza_dir(sentencizer)
+            )
 
 
 if __name__ == "__main__":

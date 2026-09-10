@@ -419,6 +419,15 @@ set `FIREFOX_COMPUTE_TYPE` to `int8` (default, matches the bundled model) or
 For the Windows build, pass `-FetchOfflineModels` to `script/build-win64.ps1`
 and the bundle is written straight into `./build`, i.e. next to `pdf2zh.exe`.
 
+`argos` splits text into sentences with `stanza` before handing it to the
+translation model. `stanza` re-downloads its `resources.json` by default, which
+never works on an intranet, so pdf2zh rewrites the manifest inside the extracted
+`.argosmodel` to describe exactly the tokenizer that archive ships and builds the
+pipeline with downloads disabled (`mwt` weights are skipped - argos only needs
+`doc.sentences`). Look for `Using stanza sentence splitter (<lang>/<package>)`
+in the log to confirm it; when the bundled tokenizer cannot be used at all the
+engine falls back to a punctuation based splitter instead of stalling.
+
 ---
 
 <h3 id="limit-services">Limit available services</h3>
