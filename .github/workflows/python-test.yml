@@ -75,10 +75,45 @@ jobs:
           uv run pytest .
 
       - name: Test - Translate a PDF file with plain text only
-        run: uv run pdf2zh ./test/file/translate.cli.plain.text.pdf -o ./test/file -s argos
+        env:
+          # 原生库（onnxruntime / torch / ctranslate2）在 hosted runner 上偶发被信号
+          # 杀死（exit 136/139），打开 faulthandler 让下次崩溃能打印 Python 栈，
+          # 限制 OpenMP 线程数以降低多运行时并存时崩溃的概率。
+          PYTHONFAULTHANDLER: "1"
+          OMP_NUM_THREADS: "1"
+        run: |
+          attempt=1
+          until [ "$attempt" -gt 3 ]; do
+            echo "::group::attempt $attempt"
+            uv run pdf2zh ./test/file/translate.cli.plain.text.pdf -o ./test/file -s argos && code=0 || code=$?
+            echo "::endgroup::"
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            echo "::warning::pdf2zh exited with $code (attempt $attempt/3), retrying..."
+            attempt=$((attempt + 1))
+            sleep 10
+          done
+          exit "$code"
 
       - name: Test - Translate a PDF file figure
-        run: uv run pdf2zh ./test/file/translate.cli.text.with.figure.pdf -o ./test/file -s argos
+        env:
+          PYTHONFAULTHANDLER: "1"
+          OMP_NUM_THREADS: "1"
+        run: |
+          attempt=1
+          until [ "$attempt" -gt 3 ]; do
+            echo "::group::attempt $attempt"
+            uv run pdf2zh ./test/file/translate.cli.text.with.figure.pdf -o ./test/file -s argos && code=0 || code=$?
+            echo "::endgroup::"
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            echo "::warning::pdf2zh exited with $code (attempt $attempt/3), retrying..."
+            attempt=$((attempt + 1))
+            sleep 10
+          done
+          exit "$code"
 
       # - name: Test - Translate a PDF file with unknown font
       #   run:
