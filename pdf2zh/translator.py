@@ -1526,10 +1526,7 @@ class FirefoxTranslator(BaseTranslator):
                 # Defensive: estimate drift on a single piece; split by chars.
                 for separator2, sub in self._char_pieces(piece):
                     sub_tokens = self._estimate_tokens(sub)
-                    if (
-                        current
-                        and current_tokens + sub_tokens > self.TOKEN_BUDGET
-                    ):
+                    if current and current_tokens + sub_tokens > self.TOKEN_BUDGET:
                         flush()
                     current += separator2 + sub
                     current_tokens += sub_tokens
