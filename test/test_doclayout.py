@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 import numpy as np
@@ -5,6 +7,8 @@ from pdf2zh.doclayout import (
     OnnxModel,
     YoloResult,
     YoloBox,
+    _cpu_fingerprint,
+    _is_optimized_model_usable,
 )
 
 
@@ -99,6 +103,74 @@ class TestYoloBox(unittest.TestCase):
         self.assertEqual(box.xyxy, box_data[:4])
         self.assertEqual(box.conf, box_data[4])
         self.assertEqual(box.cls, box_data[5])
+
+
+class TestOptimizedModelCache(unittest.TestCase):
+    """The optimized graph embeds CPU-specific kernels, so it may only be
+    reused on the machine that produced it (see _cpu_fingerprint)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.optimized_path = os.path.join(self.tmpdir.name, "model.onnx.optimized")
+        self.meta_path = self.optimized_path + ".cpu"
+
+    def _write(self, path, content):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+    def test_fingerprint_is_stable(self):
+        self.assertEqual(_cpu_fingerprint(), _cpu_fingerprint())
+        self.assertNotEqual(_cpu_fingerprint(), "")
+
+    def test_accepts_graph_from_same_cpu(self):
+        self._write(self.optimized_path, "graph")
+        self._write(self.meta_path, _cpu_fingerprint())
+
+        self.assertTrue(_is_optimized_model_usable(self.optimized_path, self.meta_path))
+
+    def test_rejects_graph_from_other_cpu(self):
+        self._write(self.optimized_path, "graph")
+        self._write(self.meta_path, "fingerprint-of-another-machine")
+
+        self.assertFalse(
+            _is_optimized_model_usable(self.optimized_path, self.meta_path)
+        )
+
+    def test_rejects_graph_without_provenance(self):
+        self._write(self.optimized_path, "graph")
+
+        self.assertFalse(
+            _is_optimized_model_usable(self.optimized_path, self.meta_path)
+        )
+
+    def test_rejects_missing_graph(self):
+        self.assertFalse(
+            _is_optimized_model_usable(self.optimized_path, self.meta_path)
+        )
+
+    @patch("onnx.load")
+    @patch("onnxruntime.InferenceSession")
+    def test_foreign_graph_is_dropped_and_regenerated(
+        self, mock_inference_session, mock_onnx_load
+    ):
+        mock_model = MagicMock()
+        mock_model.metadata_props = [
+            MagicMock(key="stride", value="32"),
+            MagicMock(key="names", value="['class1']"),
+        ]
+        mock_onnx_load.return_value = mock_model
+        self._write(self.optimized_path, "foreign graph")
+        self._write(self.meta_path, "fingerprint-of-another-machine")
+
+        OnnxModel(self.optimized_path[: -len(".optimized")])
+
+        # The foreign graph must not be handed to ONNX Runtime, it is deleted
+        # and the original model is optimized again for the local CPU.
+        self.assertFalse(os.path.exists(self.optimized_path))
+        self.assertFalse(os.path.exists(self.meta_path))
+        session_model_path = mock_inference_session.call_args[0][0]
+        self.assertEqual(session_model_path, self.optimized_path[: -len(".optimized")])
 
 
 if __name__ == "__main__":

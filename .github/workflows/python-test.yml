@@ -39,6 +39,15 @@ jobs:
           # that produced it (x86 NCHWc ops cannot run on arm64), so the cache
           # must never be shared across OS/arch.
           key: test-1-babeldoc-assets-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('babeldoctemp1234567/babeldoc/assets/embedding_assets_metadata.py') }}
+      # OS/arch is not enough: the optimized graph is also bound to the CPU
+      # microarchitecture that produced it (nchwc layouts, AVX512 kernels), and
+      # the x64 runner fleet mixes CPU models. Reusing a foreign graph loads
+      # fine but dies with "Fatal Python error: Floating point exception"
+      # (exit 136) inside onnxruntime during the first inference. Keep the cache
+      # portable: only the original models are cached, each runner re-optimizes
+      # for its own CPU.
+      - name: Drop CPU-specific optimized ONNX graphs
+        run: find ~/.cache/babeldoc -name '*.optimized*' -type f -print -delete || true
       - uses: actions/checkout@v6
       - name: Setup uv with Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
@@ -76,11 +85,8 @@ jobs:
 
       - name: Test - Translate a PDF file with plain text only
         env:
-          # 原生库（onnxruntime / torch / ctranslate2）在 hosted runner 上偶发被信号
-          # 杀死（exit 136/139），打开 faulthandler 让下次崩溃能打印 Python 栈，
-          # 限制 OpenMP 线程数以降低多运行时并存时崩溃的概率。
+          # 原生库被信号杀死时打印 Python 栈，便于定位（exit 136/139 本身无 traceback）
           PYTHONFAULTHANDLER: "1"
-          OMP_NUM_THREADS: "1"
         run: |
           attempt=1
           until [ "$attempt" -gt 3 ]; do
@@ -99,7 +105,6 @@ jobs:
       - name: Test - Translate a PDF file figure
         env:
           PYTHONFAULTHANDLER: "1"
-          OMP_NUM_THREADS: "1"
         run: |
           attempt=1
           until [ "$attempt" -gt 3 ]; do

@@ -1,7 +1,10 @@
 import abc
 import contextlib
+import hashlib
 import logging
 import os
+import platform
+import sys
 
 import cv2
 import numpy as np
@@ -87,6 +90,56 @@ class YoloBox:
         self.cls = data[-1]
 
 
+def _cpu_fingerprint() -> str:
+    """Identify the CPU feature set that an optimized ONNX graph depends on.
+
+    ONNX Runtime bakes the kernels and tensor layouts it picked for the local
+    CPU (for example ``com.microsoft.nchwc`` conv ops, AVX512 layouts) into the
+    optimized graph. Such a graph is only safe to reuse on the CPU that
+    produced it, otherwise inference can crash with SIGFPE/SIGSEGV, which is
+    not catchable as a Python exception.
+    """
+    identity = [sys.platform, platform.machine(), platform.processor() or ""]
+    if os.name == "nt":
+        identity.append(os.environ.get("PROCESSOR_IDENTIFIER", ""))
+    elif sys.platform == "linux":
+        cpuinfo_keys = {"model name", "vendor_id", "flags", "features"}
+        try:
+            with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    key, sep, value = line.partition(":")
+                    key = key.strip().lower()
+                    if not sep or key not in cpuinfo_keys:
+                        continue
+                    if key in ("flags", "features"):
+                        value = " ".join(sorted(set(value.split())))
+                    identity.append(f"{key}={value.strip()}")
+        except OSError:
+            pass
+    return hashlib.sha256("\n".join(identity).encode("utf-8")).hexdigest()[:16]
+
+
+def _is_optimized_model_usable(optimized_path: str, meta_path: str) -> bool:
+    """Whether a pre-optimized graph may be reused on this machine."""
+    if not os.path.exists(optimized_path):
+        return False
+    try:
+        with open(meta_path, encoding="utf-8") as fh:
+            recorded = fh.read().strip()
+    except OSError:
+        # Graph without provenance (produced by an older version) is untrusted.
+        logger.warning(
+            "Optimized model has no CPU record, re-optimizing: %s", optimized_path
+        )
+        return False
+    if recorded == _cpu_fingerprint():
+        return True
+    logger.warning(
+        "Ignoring optimized model built on a different CPU: %s", optimized_path
+    )
+    return False
+
+
 class OnnxModel(DocLayoutModel):
     def __init__(self, model_path: str):
         model_path = str(model_path)
@@ -114,11 +167,17 @@ class OnnxModel(DocLayoutModel):
         compiled_providers = {"CoreMLExecutionProvider", "TensorrtExecutionProvider"}
         can_cache = not compiled_providers.intersection(providers)
         optimized_path = None
+        optimized_meta_path = None
         if can_cache:
             optimized_path = model_path + ".optimized"
-            if os.path.exists(optimized_path):
+            optimized_meta_path = optimized_path + ".cpu"
+            if _is_optimized_model_usable(optimized_path, optimized_meta_path):
                 model_path = optimized_path
             else:
+                # Reuse only graphs this machine produced, see _cpu_fingerprint.
+                for stale in (optimized_path, optimized_meta_path):
+                    with contextlib.suppress(OSError):
+                        os.remove(stale)
                 sess_options.optimized_model_filepath = optimized_path
 
         try:
@@ -141,6 +200,16 @@ class OnnxModel(DocLayoutModel):
             self.model = onnxruntime.InferenceSession(
                 model_path[: -len(".optimized")], fallback_options, providers=providers
             )
+        if (
+            optimized_meta_path is not None
+            and os.path.exists(optimized_path)
+            and not os.path.exists(optimized_meta_path)
+        ):
+            # ONNX Runtime just wrote a graph for this very CPU, record it so
+            # other machines sharing the cache directory do not reuse it.
+            with contextlib.suppress(OSError):
+                with open(optimized_meta_path, "w", encoding="utf-8") as fh:
+                    fh.write(_cpu_fingerprint())
         logger.info("ONNX Runtime providers: %s", self.model.get_providers())
 
     @staticmethod
