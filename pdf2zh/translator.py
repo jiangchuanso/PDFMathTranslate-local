@@ -1404,8 +1404,199 @@ class FirefoxTranslator(BaseTranslator):
         except (TypeError, ValueError):
             return default
 
+    # Marian/OPUS-MT models converted to CTranslate2 use sinusoidal position
+    # embeddings limited to 512 tokens; a longer input raises
+    # "No position encodings are defined for positions >= 512".  The
+    # `firefox-translations` wrapper does not expose its SentencePiece
+    # tokenizer, so token counts are estimated conservatively and long texts
+    # are translated in chunks that stay safely below the limit.
+    MAX_INPUT_TOKENS = 512
+    TOKEN_BUDGET = 400
+
+    _SENTENCE_PUNCT = ".!?。！？；;"
+    _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？；;])\s+")
+    _CLAUSE_SPLIT_RE = re.compile(r"(?<=[,，、：:])\s+")
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """Conservative SentencePiece token estimate for ``text``.
+
+        CJK characters cost roughly one token each; other characters are
+        assumed to cost at most one token per three characters.  Two extra
+        tokens cover the BOS/EOS markers.
+        """
+        cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+        other = len(text) - cjk
+        return cjk + (other + 2) // 3 + 2
+
+    def _char_pieces(self, text: str) -> list:
+        """Split whitespace-free text (e.g. a CJK run) by character count.
+
+        Each returned piece is ``(separator, text)`` where the separator is
+        the original text that preceded the piece (nothing, for CJK runs).
+        """
+        pieces: list = []
+        start = 0
+        n = len(text)
+        while start < n:
+            end = start + 1
+            while (
+                end < n
+                and self._estimate_tokens(text[start : end + 1])
+                <= self.TOKEN_BUDGET - 4
+            ):
+                end += 1
+            pieces.append(("", text[start:end]))
+            start = end
+        return pieces
+
+    def _atomic_pieces(self, text: str) -> list:
+        """Split ``text`` into ``(separator, piece)`` pairs that each fit
+        within the token budget.  The separator is the whitespace that
+        preceded the piece in the original text (empty for CJK runs)."""
+        pieces: list = []
+        for sentence in self._SENTENCE_SPLIT_RE.split(text):
+            if self._estimate_tokens(sentence) <= self.TOKEN_BUDGET:
+                pieces.append((" ", sentence))
+                continue
+            for clause in self._CLAUSE_SPLIT_RE.split(sentence):
+                if self._estimate_tokens(clause) <= self.TOKEN_BUDGET:
+                    pieces.append((" ", clause))
+                    continue
+                words = clause.split()
+                if len(words) > 1:
+                    step = max(
+                        1,
+                        (len(words) * (self.TOKEN_BUDGET - 4))
+                        // max(1, self._estimate_tokens(clause)),
+                    )
+                    pieces.extend(
+                        (" ", " ".join(words[i : i + step]))
+                        for i in range(0, len(words), step)
+                    )
+                else:
+                    # No whitespace to split on (e.g. one long CJK run).
+                    pieces.extend(self._char_pieces(clause))
+        return pieces
+
+    def _split_sentences(self, text: str) -> list:
+        """Split text into whole sentences at sentence-ending punctuation.
+
+        Sentences may span newlines: a sentence that starts on one line and
+        ends on the next stays whole, so chunks are only cut after
+        punctuation.  Each sentence keeps the whitespace that preceded it in
+        the original text (e.g. the newline between two lines), and the final
+        sentence keeps any trailing whitespace.
+        """
+        sentences: list = []
+        buf = ""
+        sep = ""
+        for token in re.split(r"(\s+)", text):
+            if not token:
+                continue
+            if token.isspace():
+                sep += token
+                continue
+            buf += sep + token
+            sep = ""
+            if buf[-1] in self._SENTENCE_PUNCT:
+                sentences.append(buf)
+                buf = ""
+        if buf:
+            sentences.append(buf)
+        if sep and sentences:
+            sentences[-1] += sep
+        return sentences
+
+    def _pack_pieces(self, pieces: list, chunks: list) -> None:
+        """Pack ``(separator, piece)`` pairs into chunks appended to *chunks*."""
+        current = ""
+        current_tokens = 0
+
+        def flush():
+            nonlocal current, current_tokens
+            if current.strip():
+                chunks.append(current)
+            current = ""
+            current_tokens = 0
+
+        for separator, piece in pieces:
+            tokens = self._estimate_tokens(piece)
+            if tokens > self.TOKEN_BUDGET:
+                # Defensive: estimate drift on a single piece; split by chars.
+                for separator2, sub in self._char_pieces(piece):
+                    sub_tokens = self._estimate_tokens(sub)
+                    if (
+                        current
+                        and current_tokens + sub_tokens > self.TOKEN_BUDGET
+                    ):
+                        flush()
+                    current += separator2 + sub
+                    current_tokens += sub_tokens
+                continue
+            if current and current_tokens + tokens > self.TOKEN_BUDGET:
+                flush()
+            current += separator + piece
+            current_tokens += tokens
+        flush()
+
+    def _split_chunks(self, text: str) -> list:
+        """Pack the text into chunks below the token budget.
+
+        Chunk boundaries always fall after sentence punctuation whenever the
+        text allows it, even when that punctuation is on another line.  Only
+        punctuation-free runs fall back to clause, word or character level
+        splits.
+        """
+        chunks: list = []
+        for sentence in self._split_sentences(text):
+            if self._estimate_tokens(sentence) <= self.TOKEN_BUDGET:
+                chunks.append(sentence)
+                continue
+            # One sentence alone exceeds the budget: degrade to clause, word
+            # or character level pieces and pack those instead.
+            self._pack_pieces(self._atomic_pieces(sentence.strip()), chunks)
+        return self._merge_chunks(chunks)
+
+    def _merge_chunks(self, chunks: list) -> list:
+        """Merge consecutive chunks while the token budget allows it."""
+        merged: list = []
+        current = ""
+        current_tokens = 0
+        for chunk in chunks:
+            tokens = self._estimate_tokens(chunk)
+            if current and current_tokens + tokens > self.TOKEN_BUDGET:
+                merged.append(current)
+                current, current_tokens = "", 0
+            if current:
+                # Chunk boundaries replaced the original whitespace between
+                # sentences; rejoin with a single space.
+                current += " "
+                current_tokens += 1
+            current += chunk
+            current_tokens += tokens
+        if current:
+            merged.append(current)
+        return merged
+
     def do_translate(self, text: str) -> str:
-        return self.translator.translate(text)
+        if self._estimate_tokens(text) <= self.TOKEN_BUDGET:
+            return self.translator.translate(text)
+        estimated = self._estimate_tokens(text)
+        logger.info(
+            "firefox: text has ~%d tokens (limit %d), splitting into chunks",
+            estimated,
+            self.MAX_INPUT_TOKENS,
+        )
+        translated: list = []
+        for chunk in self._split_chunks(text):
+            ending = "\n" if chunk.endswith("\n") else ""
+            body = chunk[: -len(ending)] if ending else chunk
+            if body.strip():
+                translated.append(self.translator.translate(body) + ending)
+            else:
+                translated.append(body + ending)
+        return "".join(translated)
 
     def __del__(self):
         try:
