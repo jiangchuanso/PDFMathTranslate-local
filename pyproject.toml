@@ -39,6 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ultrafast = ["pdf-inspector>=1.25.2,<2"]
 ocr = [
     "pooch>=1.8,<2",  # first-use downloads for PyMuPDF's built-in OCR
 ]

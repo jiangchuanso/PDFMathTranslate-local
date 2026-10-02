@@ -93,6 +93,7 @@ class BaseTranslator:
         self.lang_out = lang_out
         self.model = model
         self.ignore_cache = ignore_cache
+        self.no_cache = False
 
         self.cache = TranslationCache(
             self.name,
@@ -147,7 +148,7 @@ class BaseTranslator:
         # parameter the experimental BabelDOC backend fails on every paragraph
         # (TypeError, swallowed by its per-paragraph ``except``) and produces an
         # untranslated document.
-        if not (self.ignore_cache or ignore_cache):
+        if not (self.ignore_cache or ignore_cache or self.no_cache):
             cache = self.cache.get(text)
             if cache is not None:
                 # Entries written before the repetition-loop repair existed can
@@ -155,7 +156,8 @@ class BaseTranslator:
                 return repair_repetition_loop(cache)
 
         translation = repair_repetition_loop(self.do_translate(text))
-        self.cache.set(text, translation)
+        if not self.no_cache:
+            self.cache.set(text, translation)
         return translation
 
     def do_translate(self, text: str) -> str:
