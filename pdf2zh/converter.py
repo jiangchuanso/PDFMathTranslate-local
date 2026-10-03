@@ -16,6 +16,7 @@ from pdfminer.utils import apply_matrix_pt, mult_matrix
 from pymupdf import Font
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from pdf2zh.text_spacing import add_cjk_latin_spacing
 from pdf2zh.translator import (
     AnythingLLMTranslator,
     ArgosTranslator,
@@ -442,6 +443,7 @@ class TranslateConverter(PDFConverterEx):
             return f"ET q 1 0 0 1 {x:f} {y:f} cm [] 0 d 0 J {linewidth:f} w 0 0 m {xlen:f} {ylen:f} l S Q BT "
 
         for id, new in enumerate(news):
+            new = add_cjk_latin_spacing(new)
             x: float = pstk[id].x                       # 段落初始横坐标
             y: float = pstk[id].y                       # 段落初始纵坐标
             x0: float = pstk[id].x0                     # 段落左边界
