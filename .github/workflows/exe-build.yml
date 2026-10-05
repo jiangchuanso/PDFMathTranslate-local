@@ -178,7 +178,7 @@ jobs:
 
       - name: Test - Translate without offline assets
         run: |
-          ./build/pdf2zh.exe ./test/file/translate.cli.plain.text.pdf -o ./test/file
+          ./build/pdf2zh.exe ./test/file/translate.cli.plain.text.pdf -o ./test/file -s argos
           
       - name: Upload test results
         uses: actions/upload-artifact@v7
