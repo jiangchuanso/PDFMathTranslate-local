@@ -769,19 +769,23 @@ tech_details_string = f"""
                 """
 cancellation_event_map = {}
 
-
-# The following code creates the GUI
-with gr.Blocks(
-    title=_t("PDFMathTranslate - PDF Translation with preserved formats"),
-    theme=gr.themes.Default(
+# Gradio 6 takes these styling options in launch() rather than gr.Blocks()
+launch_style_kwargs = {
+    "theme": gr.themes.Default(
         primary_hue=custom_blue,
         spacing_size="md",
         radius_size="lg",
         font=system_fonts,
         font_mono=system_mono_fonts,
     ),
-    css=custom_css,
-    head=demo_recaptcha if flag_demo else "",
+    "css": custom_css,
+    "head": demo_recaptcha if flag_demo else "",
+}
+
+
+# The following code creates the GUI
+with gr.Blocks(
+    title=_t("PDFMathTranslate - PDF Translation with preserved formats"),
 ) as demo:
     gr.Markdown(
         "# [PDFMathTranslate @ GitHub](https://github.com/Byaidu/PDFMathTranslate)"
@@ -1119,7 +1123,12 @@ def setup_gui(
         auth_kwargs = {"auth": user_list, "auth_message": html}
 
     if flag_demo:
-        demo.launch(server_name="0.0.0.0", max_file_size="5mb", inbrowser=True)
+        demo.launch(
+            server_name="0.0.0.0",
+            max_file_size="5mb",
+            inbrowser=True,
+            **launch_style_kwargs,
+        )
         return
 
     # Try binding addresses in order. NOTE: do NOT use "[::]" here.
@@ -1138,6 +1147,7 @@ def setup_gui(
                 share=share,
                 server_port=server_port,
                 **auth_kwargs,
+                **launch_style_kwargs,
             )
             return
         except Exception:
